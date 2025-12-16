@@ -1,6 +1,8 @@
-// public/js/instructores.js  (FUNCIONAL con tu instructores.html)
+// ======================================================
+// INSTRUCTORES — Barber Chino
+// ======================================================
 
-// ---------- helpers ----------
+// ---------------- helpers ----------------
 async function fetchJSON(url, options = {}) {
   const r = await fetch(url, options);
   if (!r.ok) throw new Error(await r.text());
@@ -9,22 +11,25 @@ async function fetchJSON(url, options = {}) {
 }
 
 function esc(s) {
-  return String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c]));
+  return String(s ?? "").replace(/[&<>"]/g, c => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]
+  ));
 }
 
 function badgeEstado(estado) {
-  return (String(estado || "Activo") === "Activo") ? "bg-success" : "bg-secondary";
+  return estado === "Inactivo" ? "bg-secondary" : "bg-success";
 }
 
-// ---------- DOM ----------
+// ---------------- DOM ----------------
 const tablaBody = document.querySelector("#tablaInstructores tbody");
+const lblResumen = document.getElementById("instResumen");
 
 const instBuscar = document.getElementById("instBuscar");
 const instEstado = document.getElementById("instEstado");
-const instResumen = document.getElementById("instResumen");
-const btnFiltrarInst = document.getElementById("btnFiltrarInst");
-const btnRefrescarInstr = document.getElementById("btnRefrescarInstr");
+const btnFiltrar = document.getElementById("btnFiltrarInst");
+const btnRefrescar = document.getElementById("btnRefrescarInstr");
 
+// crear
 const formInst = document.getElementById("formInst");
 const msgInst = document.getElementById("msgInst");
 const instNombre = document.getElementById("instNombre");
@@ -33,105 +38,115 @@ const instTel = document.getElementById("instTel");
 const instEmail = document.getElementById("instEmail");
 const instEstadoForm = document.getElementById("instEstadoForm");
 
-// modal editar (EL QUE TIENES EN EL HTML)
-const formInstrEdit = document.getElementById("formInstrEdit");
-const msgEditInstr = document.getElementById("msgEditInstr");
-const iEditId = document.getElementById("iEditId");
-const iEditNombre = document.getElementById("iEditNombre");
-const iEditDocumento = document.getElementById("iEditDocumento");
-const iEditTelefono = document.getElementById("iEditTelefono");
-const iEditEmail = document.getElementById("iEditEmail");
-const iEditEstado = document.getElementById("iEditEstado");
+// editar
+const formEdit = document.getElementById("formInstrEdit");
+const msgEdit = document.getElementById("msgEditInstr");
+const eId = document.getElementById("iEditId");
+const eNombre = document.getElementById("iEditNombre");
+const eCI = document.getElementById("iEditDocumento");
+const eTel = document.getElementById("iEditTelefono");
+const eEmail = document.getElementById("iEditEmail");
+const eEstado = document.getElementById("iEditEstado");
 
-let instructoresCache = [];
+let cache = [];
 
-// ---------- render ----------
-function renderInstructores(rows) {
-  if (!tablaBody) return;
+// ======================================================
+// CARGAR INSTRUCTORES
+// ======================================================
+async function cargarInstructores() {
+  const params = new URLSearchParams();
+  if (instBuscar?.value.trim()) params.append("q", instBuscar.value.trim());
+  if (instEstado?.value) params.append("estado", instEstado.value);
 
+  let url = "/api/instructores";
+  if (params.toString()) url += "?" + params.toString();
+
+  try {
+    const data = await fetchJSON(url);
+    cache = Array.isArray(data) ? data : [];
+    renderTabla(cache);
+  } catch (e) {
+    console.error(e);
+    tablaBody.innerHTML =
+      `<tr><td colspan="7" class="text-center text-danger">Error al cargar instructores</td></tr>`;
+    if (lblResumen) lblResumen.textContent = "0 instructores";
+  }
+}
+
+// ======================================================
+// RENDER TABLA
+// ======================================================
+function renderTabla(rows) {
   if (!rows.length) {
-    tablaBody.innerHTML = `<tr><td colspan="7" class="text-center text-muted">Sin instructores registrados.</td></tr>`;
-    if (instResumen) instResumen.textContent = "0 instructores";
+    tablaBody.innerHTML =
+      `<tr><td colspan="7" class="text-center text-muted">Sin instructores</td></tr>`;
+    if (lblResumen) lblResumen.textContent = "0 instructores";
     return;
   }
 
-  tablaBody.innerHTML = rows.map(inst => `
+  tablaBody.innerHTML = rows.map(i => `
     <tr>
-      <td>${inst.id}</td>
-      <td class="fw-semibold">${esc(inst.nombre)}</td>
-      <td>${esc(inst.documento || "")}</td>
-      <td>${esc(inst.telefono || "")}</td>
-      <td>${esc(inst.email || "")}</td>
-      <td><span class="badge ${badgeEstado(inst.estado)}">${esc(inst.estado || "Activo")}</span></td>
+      <td>${i.id}</td>
+      <td class="fw-semibold">${esc(i.nombre)}</td>
+      <td>${esc(i.documento || "")}</td>
+      <td>${esc(i.telefono || "")}</td>
+      <td>${esc(i.email || "")}</td>
       <td>
-        <button type="button" class="btn btn-outline-primary btn-sm" onclick="editarInstructor(${inst.id})">
+        <span class="badge ${badgeEstado(i.estado)}">${i.estado}</span>
+      </td>
+      <td>
+        <button class="btn btn-outline-primary btn-sm"
+          onclick="editarInstructor(${i.id})">
           Editar
         </button>
       </td>
     </tr>
   `).join("");
 
-  if (instResumen) instResumen.textContent = `${rows.length} instructor${rows.length !== 1 ? "es" : ""}`;
-}
-
-// ---------- cargar ----------
-async function cargarInstructores() {
-  const params = new URLSearchParams();
-  const q = (instBuscar?.value || "").trim();
-  const estado = (instEstado?.value || "").trim();
-
-  if (q) params.append("q", q);
-  if (estado) params.append("estado", estado);
-
-  let url = "/api/instructores";
-  const qs = params.toString();
-  if (qs) url += "?" + qs;
-
-  try {
-    const data = await fetchJSON(url);
-    instructoresCache = Array.isArray(data) ? data : [];
-    renderInstructores(instructoresCache);
-  } catch (e) {
-    console.error(e);
-    tablaBody.innerHTML = `<tr><td colspan="7" class="text-center text-danger">Error al cargar instructores.</td></tr>`;
-    if (instResumen) instResumen.textContent = "0 instructores";
+  if (lblResumen) {
+    lblResumen.textContent =
+      `${rows.length} instructor${rows.length !== 1 ? "es" : ""}`;
   }
 }
 
-// ---------- abrir modal editar ----------
+// ======================================================
+// EDITAR (ABRIR MODAL)
+// ======================================================
 window.editarInstructor = function (id) {
-  const inst = instructoresCache.find(x => Number(x.id) === Number(id));
+  const inst = cache.find(x => Number(x.id) === Number(id));
   if (!inst) return alert("Instructor no encontrado");
 
-  iEditId.value = inst.id ?? "";
-  iEditNombre.value = inst.nombre ?? "";
-  iEditDocumento.value = inst.documento ?? "";
-  iEditTelefono.value = inst.telefono ?? "";
-  iEditEmail.value = inst.email ?? "";
-  iEditEstado.value = inst.estado ?? "Activo";
+  eId.value = inst.id;
+  eNombre.value = inst.nombre || "";
+  eCI.value = inst.documento || "";
+  eTel.value = inst.telefono || "";
+  eEmail.value = inst.email || "";
+  eEstado.value = inst.estado || "Activo";
 
-  if (msgEditInstr) {
-    msgEditInstr.textContent = "";
-    msgEditInstr.className = "text-muted";
-  }
+  msgEdit.textContent = "";
+  msgEdit.className = "text-muted small";
 
-  new bootstrap.Modal(document.getElementById("modalInstrEdit")).show();
+  new bootstrap.Modal(
+    document.getElementById("modalInstrEdit")
+  ).show();
 };
 
-// ---------- crear ----------
-formInst?.addEventListener("submit", async (e) => {
+// ======================================================
+// CREAR INSTRUCTOR
+// ======================================================
+formInst?.addEventListener("submit", async e => {
   e.preventDefault();
 
   const payload = {
-    nombre: (instNombre?.value || "").trim(),
-    documento: (instCI?.value || "").trim(),
-    telefono: (instTel?.value || "").trim(),
-    email: (instEmail?.value || "").trim(),
-    estado: instEstadoForm?.value || "Activo"
+    nombre: instNombre.value.trim(),
+    documento: instCI.value.trim(),
+    telefono: instTel.value.trim(),
+    email: instEmail.value.trim(),
+    estado: instEstadoForm.value
   };
 
   if (!payload.nombre) {
-    msgInst.textContent = "El nombre es obligatorio.";
+    msgInst.textContent = "El nombre es obligatorio";
     msgInst.className = "text-danger small";
     return;
   }
@@ -146,48 +161,52 @@ formInst?.addEventListener("submit", async (e) => {
       body: JSON.stringify(payload)
     });
 
-    msgInst.textContent = "Instructor registrado.";
+    msgInst.textContent = "Instructor registrado";
     msgInst.className = "text-success small";
 
     formInst.reset();
-    if (instEstadoForm) instEstadoForm.value = "Activo";
+    instEstadoForm.value = "Activo";
 
     await cargarInstructores();
 
     setTimeout(() => {
-      bootstrap.Modal.getInstance(document.getElementById("modalInstructor"))?.hide();
+      bootstrap.Modal.getInstance(
+        document.getElementById("modalInstructor")
+      )?.hide();
       msgInst.textContent = "";
     }, 700);
 
   } catch (err) {
     console.error(err);
-    msgInst.textContent = "Error al registrar.";
+    msgInst.textContent = "Error al registrar";
     msgInst.className = "text-danger small";
   }
 });
 
-// ---------- guardar edición ----------
-formInstrEdit?.addEventListener("submit", async (e) => {
+// ======================================================
+// GUARDAR EDICIÓN
+// ======================================================
+formEdit?.addEventListener("submit", async e => {
   e.preventDefault();
 
-  const id = Number(iEditId.value);
+  const id = Number(eId.value);
   const payload = {
-    nombre: (iEditNombre?.value || "").trim(),
-    documento: (iEditDocumento?.value || "").trim(),
-    telefono: (iEditTelefono?.value || "").trim(),
-    email: (iEditEmail?.value || "").trim(),
-    estado: iEditEstado?.value || "Activo"
+    nombre: eNombre.value.trim(),
+    documento: eCI.value.trim(),
+    telefono: eTel.value.trim(),
+    email: eEmail.value.trim(),
+    estado: eEstado.value
   };
 
   if (!payload.nombre) {
-    msgEditInstr.textContent = "El nombre es obligatorio.";
-    msgEditInstr.className = "text-danger small";
+    msgEdit.textContent = "El nombre es obligatorio";
+    msgEdit.className = "text-danger small";
     return;
   }
 
   try {
-    msgEditInstr.textContent = "Guardando...";
-    msgEditInstr.className = "text-muted small";
+    msgEdit.textContent = "Guardando...";
+    msgEdit.className = "text-muted small";
 
     await fetchJSON(`/api/instructores/${id}`, {
       method: "PUT",
@@ -197,30 +216,34 @@ formInstrEdit?.addEventListener("submit", async (e) => {
 
     await cargarInstructores();
 
-    msgEditInstr.textContent = "Actualizado.";
-    msgEditInstr.className = "text-success small";
+    msgEdit.textContent = "Actualizado";
+    msgEdit.className = "text-success small";
 
     setTimeout(() => {
-      bootstrap.Modal.getInstance(document.getElementById("modalInstrEdit"))?.hide();
-      msgEditInstr.textContent = "";
+      bootstrap.Modal.getInstance(
+        document.getElementById("modalInstrEdit")
+      )?.hide();
+      msgEdit.textContent = "";
     }, 600);
 
   } catch (err) {
     console.error(err);
-    msgEditInstr.textContent = "No se pudo guardar.";
-    msgEditInstr.className = "text-danger small";
+    msgEdit.textContent = "No se pudo guardar";
+    msgEdit.className = "text-danger small";
   }
 });
 
-// ---------- eventos ----------
-instBuscar?.addEventListener("keydown", (e) => {
+// ======================================================
+// EVENTOS
+// ======================================================
+btnFiltrar?.addEventListener("click", cargarInstructores);
+btnRefrescar?.addEventListener("click", cargarInstructores);
+
+instBuscar?.addEventListener("keydown", e => {
   if (e.key === "Enter") {
     e.preventDefault();
     cargarInstructores();
   }
 });
-
-btnFiltrarInst?.addEventListener("click", cargarInstructores);
-btnRefrescarInstr?.addEventListener("click", cargarInstructores);
 
 document.addEventListener("DOMContentLoaded", cargarInstructores);

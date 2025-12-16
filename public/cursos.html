@@ -10,7 +10,6 @@
 </head>
 
 <body class="bg-light">
-
   <div class="d-flex">
 
     <aside id="sidebar" class="sidebar shadow-sm">
@@ -59,7 +58,6 @@
     <div id="overlay" class="overlay d-lg-none" onclick="toggleSidebar()"></div>
 
     <main class="main-content flex-grow-1">
-
       <div class="topbar bg-white shadow-sm">
         <button class="btn btn-outline-primary d-lg-none" onclick="toggleSidebar()">☰</button>
         <h4 class="mb-0">Cursos</h4>
@@ -70,7 +68,7 @@
         <div class="d-flex justify-content-between align-items-center mb-3">
           <div>
             <h4 class="mb-0">Cursos</h4>
-            <p class="text-secondary small mb-0">Gestiona cursos, horarios y estado.</p>
+            <p class="text-secondary small mb-0">Gestiona cursos, horarios, cupos y estado.</p>
           </div>
 
           <div class="d-flex gap-2">
@@ -97,6 +95,7 @@
                 <select id="cEstado" class="form-select form-select-sm">
                   <option value="">Todos</option>
                   <option value="Programado">Programado</option>
+                  <option value="Activo">Activo</option>
                   <option value="En curso">En curso</option>
                   <option value="Finalizado">Finalizado</option>
                   <option value="Cancelado">Cancelado</option>
@@ -126,6 +125,8 @@
                   <th>Curso</th>
                   <th>Instructor</th>
                   <th>Horario</th>
+                  <th class="text-center">Clases</th>
+                  <th class="text-center">Inscritos</th>
                   <th class="text-end">Precio</th>
                   <th>Estado</th>
                   <th style="width:140px">Acciones</th>
@@ -156,13 +157,44 @@
                     </div>
 
                     <div class="col-md-6">
-                      <label class="form-label">Instructor</label>
-                      <input id="cursoInstructor" class="form-control" placeholder="Ej: Juan Pérez">
+                      <label class="form-label">Instructor *</label>
+                      <select id="cursoInstructorId" class="form-select" required>
+                        <option value="">-- Seleccionar instructor --</option>
+                      </select>
+                    </div>
+
+                    <div class="col-12"><hr class="my-2"></div>
+
+                    <div class="col-md-4">
+                      <label class="form-label">Fecha de inicio *</label>
+                      <input type="date" class="form-control" id="cursoFechaInicio" required>
                     </div>
 
                     <div class="col-md-4">
-                      <label class="form-label">Horario</label>
-                      <input id="cursoHorario" class="form-control" placeholder="Ej: Lun-Mie 18:00">
+                      <label class="form-label">Número de clases *</label>
+                      <input id="cursoNroClases" type="number" class="form-control" min="1" required>
+                    </div>
+
+                    <div class="col-md-4">
+                      <label class="form-label">Cupo máximo *</label>
+                      <input id="cursoCupo" type="number" class="form-control" min="1" required>
+                    </div>
+
+                    <div class="col-12"><hr class="my-2"></div>
+
+                    <div class="col-md-6">
+                      <label class="form-label">Días *</label>
+                      <input id="cursoDias" class="form-control" placeholder="Ej: Lunes, Miércoles, Viernes" required>
+                    </div>
+
+                    <div class="col-md-3">
+                      <label class="form-label">Hora inicio *</label>
+                      <input id="cursoHoraInicio" type="time" class="form-control" required>
+                    </div>
+
+                    <div class="col-md-3">
+                      <label class="form-label">Duración (int) *</label>
+                      <input id="cursoDuracion" type="number" class="form-control" min="1" required>
                     </div>
 
                     <div class="col-md-4">
@@ -174,6 +206,7 @@
                       <label class="form-label">Estado</label>
                       <select id="cursoEstado" class="form-select">
                         <option value="Programado">Programado</option>
+                        <option value="Activo">Activo</option>
                         <option value="En curso">En curso</option>
                         <option value="Finalizado">Finalizado</option>
                         <option value="Cancelado">Cancelado</option>
@@ -217,35 +250,69 @@
                   <input type="hidden" id="cEditId">
 
                   <div class="row g-3">
+
                     <div class="col-md-6">
                       <label class="form-label">Nombre *</label>
                       <input id="cEditNombre" class="form-control" required>
                     </div>
 
                     <div class="col-md-6">
-                      <label class="form-label">Instructor</label>
-                      <input id="cEditInstructor" class="form-control" placeholder="Ej: Diego Dell">
+                      <label class="form-label">Instructor *</label>
+                      <select id="cEditInstructorId" class="form-select" required>
+                        <option value="">-- Seleccionar instructor --</option>
+                      </select>
                     </div>
+
+                    <div class="col-12"><hr class="my-2"></div>
+
+                    <div class="col-md-4">
+                      <label class="form-label">Fecha de inicio *</label>
+                      <input id="cEditFechaInicio" type="date" class="form-control" required>
+                    </div>
+
+                    <div class="col-md-4">
+                      <label class="form-label">Número de clases *</label>
+                      <input id="cEditNroClases" type="number" class="form-control" min="1" required>
+                    </div>
+
+                    <div class="col-md-4">
+                      <label class="form-label">Cupo máximo *</label>
+                      <input id="cEditCupo" type="number" class="form-control" min="1" required>
+                    </div>
+
+                    <div class="col-12"><hr class="my-2"></div>
 
                     <div class="col-md-6">
-                      <label class="form-label">Horario</label>
-                      <input id="cEditHorario" class="form-control" placeholder="Ej: Mar-Jue 19:00">
+                      <label class="form-label">Días *</label>
+                      <input id="cEditDias" class="form-control" required>
                     </div>
 
                     <div class="col-md-3">
+                      <label class="form-label">Hora inicio *</label>
+                      <input id="cEditHoraInicio" type="time" class="form-control" required>
+                    </div>
+
+                    <div class="col-md-3">
+                      <label class="form-label">Duración (int) *</label>
+                      <input id="cEditDuracion" type="number" class="form-control" min="1" required>
+                    </div>
+
+                    <div class="col-md-4">
                       <label class="form-label">Precio (Bs)</label>
-                      <input id="cEditPrecio" class="form-control" type="number" min="0" step="0.01">
+                      <input id="cEditPrecio" type="number" class="form-control" min="0" step="0.01">
                     </div>
 
-                    <div class="col-md-3">
+                    <div class="col-md-4">
                       <label class="form-label">Estado</label>
                       <select id="cEditEstado" class="form-select">
                         <option value="Programado">Programado</option>
+                        <option value="Activo">Activo</option>
                         <option value="En curso">En curso</option>
                         <option value="Finalizado">Finalizado</option>
                         <option value="Cancelado">Cancelado</option>
                       </select>
                     </div>
+
                   </div>
 
                   <div class="mt-2">
@@ -268,7 +335,6 @@
         </div>
 
       </div>
-
     </main>
   </div>
 

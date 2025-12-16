@@ -1,42 +1,54 @@
-
 const express = require("express");
-const db = require("../db");
 const router = express.Router();
+const db = require("../db"); // IMPORTANTE: db único
 
-/**
- * GET /api/instructores
- * Lista instructores (con filtros opcionales)
- */
+// ===================================================
+// GET /api/instructores
+// Filtros: ?q=nombre|documento  &estado=Activo|Inactivo
+// ===================================================
 router.get("/", (req, res) => {
-  const { q = "", estado = "" } = req.query;
+  const q = String(req.query.q || "").trim();
+  const estado = String(req.query.estado || "").trim();
 
-  let sql = "SELECT * FROM instructores WHERE 1=1";
+  const where = [];
   const params = [];
 
   if (q) {
-    sql += " AND (nombre LIKE ? OR documento LIKE ?)";
-    params.push(`%${q}%`, `%${q}%`);
+    where.push("(nombre LIKE ? OR documento LIKE ?)");
+    const like = `%${q}%`;
+    params.push(like, like);
   }
 
   if (estado) {
-    sql += " AND estado = ?";
+    where.push("estado = ?");
     params.push(estado);
   }
 
-  sql += " ORDER BY nombre ASC";
+  const sql = `
+    SELECT *
+    FROM instructores
+    ${where.length ? "WHERE " + where.join(" AND ") : ""}
+    ORDER BY nombre ASC
+  `;
 
   db.all(sql, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
+    res.json(rows || []);
   });
 });
 
-/**
- * POST /api/instructores
- * Crear instructor
- */
+// ===================================================
+// POST /api/instructores
+// Crear instructor
+// ===================================================
 router.post("/", (req, res) => {
-  const { nombre, documento, telefono, email, estado } = req.body;
+  const b = req.body || {};
+
+  const nombre = String(b.nombre || "").trim();
+  const documento = String(b.documento || "").trim();
+  const telefono = String(b.telefono || "").trim();
+  const email = String(b.email || "").trim();
+  const estado = String(b.estado || "Activo").trim();
 
   if (!nombre) {
     return res.status(400).json({ error: "El nombre es obligatorio" });
@@ -47,27 +59,39 @@ router.post("/", (req, res) => {
     VALUES (?, ?, ?, ?, ?)
   `;
 
-  const params = [
-    nombre.trim(),
-    documento || "",
-    telefono || "",
-    email || "",
-    estado || "Activo",
-  ];
+  db.run(
+    sql,
+    [nombre, documento, telefono, email, estado],
+    function (err) {
+      if (err) {
+        if (String(err.message).includes("UNIQUE")) {
+          return res.status(409).json({ error: "Documento duplicado" });
+        }
+        return res.status(500).json({ error: err.message });
+      }
 
-  db.run(sql, params, function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.status(201).json({ id: this.lastID });
-  });
+      res.status(201).json({ ok: true, id: this.lastID });
+    }
+  );
 });
 
-/**
- * PUT /api/instructores/:id
- * Editar instructor
- */
+// ===================================================
+// PUT /api/instructores/:id
+// Editar instructor
+// ===================================================
 router.put("/:id", (req, res) => {
-  const { id } = req.params;
-  const { nombre, documento, telefono, email, estado } = req.body;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    return res.status(400).json({ error: "ID inválido" });
+  }
+
+  const b = req.body || {};
+
+  const nombre = String(b.nombre || "").trim();
+  const documento = String(b.documento || "").trim();
+  const telefono = String(b.telefono || "").trim();
+  const email = String(b.email || "").trim();
+  const estado = String(b.estado || "Activo").trim();
 
   if (!nombre) {
     return res.status(400).json({ error: "El nombre es obligatorio" });
@@ -75,22 +99,49 @@ router.put("/:id", (req, res) => {
 
   const sql = `
     UPDATE instructores
-    SET nombre = ?, documento = ?, telefono = ?, email = ?, estado = ?
+    SET nombre = ?,
+        documento = ?,
+        telefono = ?,
+        email = ?,
+        estado = ?
     WHERE id = ?
   `;
 
-  const params = [
-    nombre.trim(),
-    documento || "",
-    telefono || "",
-    email || "",
-    estado || "Activo",
-    id,
-  ];
+  db.run(
+    sql,
+    [nombre, documento, telefono, email, estado, id],
+    function (err) {
+      if (err) {
+        if (String(err.message).includes("UNIQUE")) {
+          return res.status(409).json({ error: "Documento duplicado" });
+        }
+        return res.status(500).json({ error: err.message });
+      }
 
-  db.run(sql, params, function (err) {
+      if (this.changes === 0) {
+        return res.status(404).json({ error: "Instructor no encontrado" });
+      }
+
+      res.json({ ok: true });
+    }
+  );
+});
+
+// ===================================================
+// DELETE /api/instructores/:id   (opcional)
+// ===================================================
+router.delete("/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    return res.status(400).json({ error: "ID inválido" });
+  }
+
+  db.run("DELETE FROM instructores WHERE id = ?", [id], function (err) {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ updated: this.changes });
+    if (this.changes === 0) {
+      return res.status(404).json({ error: "Instructor no encontrado" });
+    }
+    res.json({ ok: true });
   });
 });
 
