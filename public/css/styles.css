@@ -1,1 +1,116 @@
 
+/* ============ SIDEBAR BASE ============ */
+.sidebar {
+  width: 260px;
+  background: #fff;
+  height: 100vh;
+  position: fixed;
+  left: 0;
+  top: 0;
+  padding: 1.2rem .9rem;
+  overflow-y: auto;
+  transition: transform .25s ease-in-out;
+  z-index: 2000;
+}
+
+.sidebar-header {
+  margin-bottom: 1.5rem;
+}
+
+.brand-logo {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+}
+
+.sidebar-title {
+  font-size: .75rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: #6c757d;
+  margin-bottom: .25rem;
+}
+
+.sidebar-nav .nav-link {
+  font-size: .9rem;
+  padding: .45rem .7rem;
+  border-radius: .4rem;
+  color: #495057;
+}
+
+.sidebar-nav .nav-link:hover {
+  background: #f0f2f5;
+  color: #000;
+}
+
+.sidebar-nav .nav-link.active {
+  background: #e6f0ff;
+  color: #0d6efd;
+}
+
+/* Overlay mobile */
+.overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  z-index: 1800;
+}
+.overlay.show { display: block; }
+
+/* Sidebar cerrado en móvil */
+@media (max-width: 991px) {
+  .sidebar {
+    transform: translateX(-100%);
+  }
+  .sidebar.open {
+    transform: translateX(0);
+  }
+}
+
+/* MAIN CONTENT */
+.main-content {
+  margin-left: 260px;
+  width: calc(100% - 260px);
+  transition: .25s;
+}
+@media (max-width: 991px) {
+  .main-content {
+    margin-left: 0 !important;
+    width: 100%;
+  }
+}
+
+/* TOPBAR */
+.topbar {
+  padding: 1rem 1.5rem;
+}
+
+/* Tarjetas KPI */
+.card-kpi {
+  border-left: 5px solid #0d6efd10;
+}
+.kpi-label {
+  font-size: .9rem;
+  color: #6c757d;
+}
+.kpi-value {
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+/* Accesos rápidos */
+.card-quick {
+  background: #f8f9fc;
+  border-radius: 10px;
+}
+
+/* Módulos */
+.card-module {
+  border-radius: 10px;
+  transition: .2s;
+}
+.card-module:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 4px 14px rgba(0,0,0,.1);
+}

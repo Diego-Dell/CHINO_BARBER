@@ -273,3 +273,6 @@ CREATE TABLE IF NOT EXISTS agenda_turnos (
 CREATE INDEX IF NOT EXISTS ix_turnos_fecha ON agenda_turnos(fecha);
 CREATE INDEX IF NOT EXISTS ix_turnos_estado ON agenda_turnos(estado);
 CREATE INDEX IF NOT EXISTS ix_turnos_instructor ON agenda_turnos(instructor_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_inscripcion_fecha
+ON asistencia(inscripcion_id, fecha);
