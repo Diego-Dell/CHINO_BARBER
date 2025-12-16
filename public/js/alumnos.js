@@ -107,7 +107,8 @@ function renderTabla(rows) {
       <td>${esc(a.documento || "")}</td>
       <td>${esc(a.telefono || "")}</td>
       <td>${esc(a.email || "")}</td>
-      <td>${esc(a.fecha_ingreso || "")}</td>
+      <td>${esc(formateaFecha(a.fecha_ingreso || ""))}</td>
+
       <td>
         <span class="badge ${String(a.estado) === "Inactivo" ? "bg-secondary" : "bg-success"}">
           ${esc(a.estado || "Activo")}
@@ -298,10 +299,11 @@ async function buscarAlumnoPorCI() {
       return;
     }
 
-    const a = rows[0];
+    const a = await fetchJSON(`/api/alumnos/by-documento/${encodeURIComponent(ci)}`);
     inscGAlumnoId.value = a.id;
     inscGAlumnoNombre.textContent = a.nombre;
     inscGAlumnoInfo.textContent = `CI: ${a.documento || ""}`;
+
 
     msgInscribirG.textContent = "";
     msgInscribirG.className = "text-muted small";

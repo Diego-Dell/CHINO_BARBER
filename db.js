@@ -1,79 +1,171 @@
-const sqlite3 = require("sqlite3").verbose();
+// db.js (raíz del proyecto)
+// Punto único de conexión a SQLite para todo el sistema (routes + services).
+// CommonJS, compatible Windows/Linux. Usa services/config.js para DB_PATH.
+
+const fs = require("fs");
 const path = require("path");
+const sqlite3 = require("sqlite3").verbose();
 
-const dbPath = path.join(__dirname, "database", "barber_school.db");
-const db = new sqlite3.Database(dbPath);
+const config = require("./services/config");
 
+const DB_PATH = config && config.DB_PATH ? String(config.DB_PATH) : path.resolve("./db/database.sqlite");
+
+// Asegurar carpeta contenedora
+try {
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+} catch (_) {}
+
+// Abrir DB
+const db = new sqlite3.Database(DB_PATH);
+
+// ===============================
+// Helpers promisificados (OBLIGATORIOS)
+// ===============================
+function _normalizeParams(params) {
+  if (params === undefined || params === null) return [];
+  return Array.isArray(params) ? params : [params];
+}
+
+function _decorateError(err, sql) {
+  if (!err) return err;
+  const e = new Error(`${err.message} | SQL: ${String(sql).slice(0, 500)}`);
+  e.code = err.code;
+  return e;
+}
+
+function run(sql, params = []) {
+  const p = _normalizeParams(params);
+  return new Promise((resolve, reject) => {
+    db.run(sql, p, function (err) {
+      if (err) return reject(_decorateError(err, sql));
+      resolve({ lastID: this.lastID, changes: this.changes });
+    });
+  });
+}
+
+function get(sql, params = []) {
+  const p = _normalizeParams(params);
+  return new Promise((resolve, reject) => {
+    db.get(sql, p, (err, row) => {
+      if (err) return reject(_decorateError(err, sql));
+      resolve(row || null);
+    });
+  });
+}
+
+function all(sql, params = []) {
+  const p = _normalizeParams(params);
+  return new Promise((resolve, reject) => {
+    db.all(sql, p, (err, rows) => {
+      if (err) return reject(_decorateError(err, sql));
+      resolve(rows || []);
+    });
+  });
+}
+
+function exec(sql) {
+  return new Promise((resolve, reject) => {
+    db.exec(sql, (err) => {
+      if (err) return reject(_decorateError(err, sql));
+      resolve(true);
+    });
+  });
+}
+
+// Helper extra recomendado: transacciones
+async function transaction(fn) {
+  if (typeof fn !== "function") throw new Error("transaction(fn): fn must be a function");
+  await exec("BEGIN");
+  try {
+    const result = await fn({ run, get, all, exec, db, DB_PATH });
+    await exec("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await exec("ROLLBACK");
+    } catch (_) {}
+    throw e;
+  }
+}
+
+// ===============================
+// PRAGMAs recomendados + init mínimo
+// ===============================
 db.serialize(() => {
-  // ALUMNOS
-  db.run(`CREATE TABLE IF NOT EXISTS alumnos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre TEXT NOT NULL,
-    documento TEXT NOT NULL UNIQUE,
-    telefono TEXT,
-    email TEXT,
-    fecha_ingreso TEXT,
-    estado TEXT DEFAULT 'Activo'
-  )`);
+  // PRAGMA foreign keys
+  db.run("PRAGMA foreign_keys = ON;");
 
-  // INSTRUCTORES
-  db.run(`CREATE TABLE IF NOT EXISTS instructores (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre TEXT NOT NULL,
-    especialidad TEXT,
-    telefono TEXT,
-    email TEXT,
-    estado TEXT DEFAULT 'Activo'
-  )`);
+  // Evitar locks frecuentes
+  db.run("PRAGMA busy_timeout = 5000;");
 
-  // CURSOS
-  db.run(`CREATE TABLE IF NOT EXISTS cursos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre TEXT NOT NULL,
-    nivel TEXT,
-    nro_clases INTEGER,
-    dias TEXT,
-    horario_por_dia TEXT,
-    precio REAL,
-    cupo INTEGER,
-    instructor_id INTEGER,
-    estado TEXT,
-    FOREIGN KEY(instructor_id) REFERENCES instructores(id)
-  )`);
+  // Mejor performance en la mayoría de casos
+  db.run("PRAGMA synchronous = NORMAL;");
 
-  // PAGOS
-  db.run(`CREATE TABLE IF NOT EXISTS pagos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    alumno_id INTEGER NOT NULL,
-    curso_id INTEGER,
-    fecha TEXT,
-    monto REAL NOT NULL,
-    estado TEXT,
-    observaciones TEXT,
-    FOREIGN KEY(alumno_id) REFERENCES alumnos(id),
-    FOREIGN KEY(curso_id) REFERENCES cursos(id)
-  )`);
+  // temp_store en memoria (opcional)
+  db.run("PRAGMA temp_store = MEMORY;");
 
-  // ASISTENCIA
-  db.run(`CREATE TABLE IF NOT EXISTS asistencia (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    curso_id INTEGER,
-    alumno_id INTEGER,
-    fecha TEXT,
-    presente INTEGER,
-    FOREIGN KEY(curso_id) REFERENCES cursos(id),
-    FOREIGN KEY(alumno_id) REFERENCES alumnos(id)
-  )`);
+  // WAL (si falla, ignorar sin tumbar)
+  db.run("PRAGMA journal_mode = WAL;", (err) => {
+    if (err) {
+      // No crashear: algunos FS/entornos no soportan WAL bien
+      // console.warn("[DB] WAL not enabled:", err.message);
+    }
+  });
 
-  // INVENTARIO
-  db.run(`CREATE TABLE IF NOT EXISTS inventario (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    producto TEXT,
-    cantidad INTEGER,
-    responsable TEXT,
-    curso TEXT,
-    fecha TEXT
-  )`);
+  // Init mínimo: tabla usuarios (para auth) — sin seed por defecto
+  db.run(
+    `
+    CREATE TABLE IF NOT EXISTS usuarios (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      usuario TEXT UNIQUE NOT NULL,
+      pass_hash TEXT NOT NULL,
+      rol TEXT NOT NULL,
+      estado TEXT NOT NULL DEFAULT 'Activo',
+      created_at TEXT
+    )
+    `,
+    (err) => {
+      if (err) {
+        // No crashear, pero deja error visible si alguien mira logs
+        // console.error("[DB] Failed to ensure usuarios table:", err.message);
+      }
+    }
+  );
+
+  // Seed opcional (desactivado por defecto)
+  // Si quieres, pon SEED_ADMIN=true y asegúrate que auth.routes maneje bcrypt.
+  // Aquí NO insertamos admin por seguridad/consistencia con tu auth.routes.js.
 });
 
-module.exports = db;
+// ===============================
+// Compatibilidad de importación
+// Forma A: const { db, run, get, all, exec } = require("../db");
+// Forma B: const db = require("../db"); // y db.run/db.get/db.all disponibles
+// ===============================
+const exported = { db, run, get, all, exec, transaction, DB_PATH };
+
+// Adjuntar helpers al objeto exportado y al db para compatibilidad
+exported.run = run;
+exported.get = get;
+exported.all = all;
+exported.exec = exec;
+exported.transaction = transaction;
+
+db.runP = run;
+db.getP = get;
+db.allP = all;
+db.execP = exec;
+db.transaction = transaction;
+db.DB_PATH = DB_PATH;
+
+module.exports = exported;
+
+/*
+Uso desde routes:
+  const { all } = require("../db");
+  const rows = await all("SELECT * FROM alumnos WHERE estado=?", ["Activo"]);
+
+También compatible:
+  const database = require("../db");
+  const rows = await database.all("SELECT * FROM cursos");
+*/

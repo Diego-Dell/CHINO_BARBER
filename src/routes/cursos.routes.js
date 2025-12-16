@@ -1,271 +1,554 @@
 // src/routes/cursos.routes.js
 const express = require("express");
-const db = require("../db"); // debe exportar tu sqlite Database()
+const db = require("../db"); // sqlite3.Database() exportada
 const router = express.Router();
 
 // ===============================
-// Helpers
+// Middlewares (importables o locales)
 // ===============================
+// Si ya exportas { authRequired, adminOnly } desde auth.routes.js, puedes usar:
+// const { authRequired, adminOnly } = require("./auth.routes"); // ajusta ruta según tu estructura
+// Aquí los definimos localmente para que el archivo sea 100% plug & play.
+
+function authRequired(req, res, next) {
+  if (!req.session || !req.session.user) {
+    return res.status(401).json({ ok: false, error: "No autorizado" });
+  }
+  next();
+}
+
+function adminOnly(req, res, next) {
+  if (!req.session || !req.session.user) {
+    return res.status(401).json({ ok: false, error: "No autorizado" });
+  }
+  if (req.session.user.rol !== "Admin") {
+    return res.status(403).json({ ok: false, error: "Solo Admin" });
+  }
+  next();
+}
+
+// Todas las rutas requieren sesión
+router.use(authRequired);
+
+// ===============================
+// Helpers SQLite promisificados
+// ===============================
+function dbRun(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) return reject(err);
+      resolve({ lastID: this.lastID, changes: this.changes });
+    });
+  });
+}
+
+function dbGet(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) return reject(err);
+      resolve(row || null);
+    });
+  });
+}
+
+function dbAll(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows || []);
+    });
+  });
+}
+
+// ===============================
+// Utilidades / validaciones
+// ===============================
+const ESTADOS_CURSO = new Set(["Activo", "Inactivo", "Finalizado"]);
+
 function likeWrap(s) {
   return `%${String(s || "").trim()}%`;
 }
 
-function toNum(v, def = 0) {
+function toInt(v, def = null) {
+  if (v === undefined || v === null || v === "") return def;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : def;
+}
+
+function toNum(v, def = null) {
+  if (v === undefined || v === null || v === "") return def;
   const n = Number(v);
   return Number.isFinite(n) ? n : def;
 }
 
-function nowISODate() {
-  return new Date().toISOString().slice(0, 10);
+function normStr(v) {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  return s.length ? s : null;
 }
 
-// Guardamos TODO en horario_por_dia (tu tabla no tiene fecha_inicio/hora/duracion separados)
-function buildHorario({ fecha_inicio, hora_inicio, duracion }) {
-  const fi = String(fecha_inicio || "").trim();
-  const hi = String(hora_inicio || "").trim();
-  const du = String(duracion || "").trim();
+async function getInscripcionesActivasCount(curso_id) {
+  const row = await dbGet(
+    `SELECT COUNT(*) AS n
+     FROM inscripciones
+     WHERE curso_id = ? AND estado = 'Activa'`,
+    [curso_id]
+  );
+  return row ? Number(row.n || 0) : 0;
+}
 
-  const parts = [];
-  if (fi) parts.push(`Inicio:${fi}`);
-  if (hi) parts.push(`Hora:${hi}`);
-  if (du) parts.push(`Dur:${du}min`);
-  return parts.join(" | ");
+async function validateInstructorActivo(instructor_id) {
+  const row = await dbGet(
+    `SELECT id, estado
+     FROM instructores
+     WHERE id = ?`,
+    [instructor_id]
+  );
+  if (!row) return { ok: false, code: 400, error: "instructor_id no existe" };
+  if (row.estado !== "Activo") {
+    // Recomendado: exigir activo
+    return { ok: false, code: 400, error: "El instructor debe estar Activo" };
+  }
+  return { ok: true };
 }
 
 // ===============================
-// GET /api/cursos
-// Query:
-//   q=texto
-//   estado=Programado|En curso|Finalizado|Cancelado
-//   instructor_id=1
-//   disponibles=1   (solo Programado/En curso)
+// 1) GET /api/cursos
+// Query: q, estado, instructor_id, limit, offset, withStats=1
 // ===============================
-router.get("/", (req, res) => {
-  const q = String(req.query.q || "").trim();
-  const estado = String(req.query.estado || "").trim();
-  const instructor_id = toNum(req.query.instructor_id, 0);
-  const disponibles = String(req.query.disponibles || "").trim() === "1";
+router.get("/", async (req, res) => {
+  try {
+    const q = normStr(req.query.q);
+    const estado = normStr(req.query.estado);
+    const instructor_id = toInt(req.query.instructor_id, null);
+    const withStats = String(req.query.withStats || "").trim() === "1";
 
-  const where = [];
-  const params = [];
+    const limit = Math.max(1, toInt(req.query.limit, 50) ?? 50);
+    const offset = Math.max(0, toInt(req.query.offset, 0) ?? 0);
 
-  if (q) {
-    where.push("(c.nombre LIKE ?)");
-    params.push(likeWrap(q));
+    const where = [];
+    const params = [];
+
+    if (q) {
+      where.push("(c.nombre LIKE ? OR c.nivel LIKE ?)");
+      params.push(likeWrap(q), likeWrap(q));
+    }
+
+    if (estado) {
+      if (!ESTADOS_CURSO.has(estado)) {
+        return res.status(400).json({ ok: false, error: "estado inválido (Activo|Inactivo|Finalizado)" });
+      }
+      where.push("c.estado = ?");
+      params.push(estado);
+    }
+
+    if (instructor_id !== null) {
+      where.push("c.instructor_id = ?");
+      params.push(instructor_id);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    // Total filtrado (sin paginación)
+    const totalRow = await dbGet(
+      `
+      SELECT COUNT(*) AS total
+      FROM cursos c
+      JOIN instructores i ON i.id = c.instructor_id
+      ${whereSql}
+      `,
+      params
+    );
+    const total = totalRow ? Number(totalRow.total || 0) : 0;
+
+    let data = [];
+
+    if (!withStats) {
+      data = await dbAll(
+        `
+        SELECT
+          c.*,
+          i.nombre AS instructor_nombre
+        FROM cursos c
+        JOIN instructores i ON i.id = c.instructor_id
+        ${whereSql}
+        ORDER BY c.id DESC
+        LIMIT ? OFFSET ?
+        `,
+        [...params, limit, offset]
+      );
+
+      return res.json({ ok: true, data, meta: { limit, offset, total } });
+    }
+
+    // withStats=1: agregamos count de inscripciones activas y cupos disponibles
+    data = await dbAll(
+      `
+      SELECT
+        c.*,
+        i.nombre AS instructor_nombre,
+        COALESCE(x.inscripciones_activas, 0) AS inscripciones_activas,
+        (c.cupo - COALESCE(x.inscripciones_activas, 0)) AS cupos_disponibles
+      FROM cursos c
+      JOIN instructores i ON i.id = c.instructor_id
+      LEFT JOIN (
+        SELECT curso_id, COUNT(*) AS inscripciones_activas
+        FROM inscripciones
+        WHERE estado = 'Activa'
+        GROUP BY curso_id
+      ) x ON x.curso_id = c.id
+      ${whereSql}
+      ORDER BY c.id DESC
+      LIMIT ? OFFSET ?
+      `,
+      [...params, limit, offset]
+    );
+
+    // Garantizar no negativo visualmente (si alguien dañó datos)
+    data = data.map((r) => ({
+      ...r,
+      inscripciones_activas: Number(r.inscripciones_activas || 0),
+      cupos_disponibles: Math.max(0, Number(r.cupos_disponibles || 0)),
+    }));
+
+    return res.json({ ok: true, data, meta: { limit, offset, total } });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: "Error al listar cursos" });
   }
+});
 
-  if (estado) {
-    where.push("c.estado = ?");
-    params.push(estado);
-  }
+// ===============================
+// 2) GET /api/cursos/:id  (detalle + stats)
+// ===============================
+router.get("/:id", async (req, res) => {
+  try {
+    const id = toInt(req.params.id, null);
+    if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
-  if (instructor_id) {
-    where.push("c.instructor_id = ?");
-    params.push(instructor_id);
-  }
+    const curso = await dbGet(
+      `
+      SELECT
+        c.*,
+        i.nombre AS instructor_nombre
+      FROM cursos c
+      JOIN instructores i ON i.id = c.instructor_id
+      WHERE c.id = ?
+      `,
+      [id]
+    );
 
-  if (disponibles) {
-    where.push("(c.estado IN ('Programado','En curso'))");
-  }
+    if (!curso) return res.status(404).json({ ok: false, error: "Curso no encontrado" });
 
-  const sql = `
-    SELECT
-      c.*,
-      i.nombre AS instructor_nombre,
-      (
-        SELECT COUNT(1)
-        FROM inscripciones ins
-        WHERE ins.curso_id = c.id AND ins.estado = 'Activa'
-      ) AS inscritos_activos
-    FROM cursos c
-    LEFT JOIN instructores i ON i.id = c.instructor_id
-    ${where.length ? "WHERE " + where.join(" AND ") : ""}
-    ORDER BY c.id DESC
-  `;
+    const inscripciones_activas = await getInscripcionesActivasCount(id);
+    const cupos_disponibles = Math.max(0, Number(curso.cupo || 0) - inscripciones_activas);
 
-  db.all(sql, params, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-
-    const out = (rows || []).map(r => {
-      const cupo = toNum(r.cupo, 0);
-      const act = toNum(r.inscritos_activos, 0);
-      return {
-        ...r,
-        inscritos_activos: act,
-        inscritos_texto: `${act}/${cupo}`,
-      };
+    return res.json({
+      ok: true,
+      data: {
+        ...curso,
+        inscripciones_activas,
+        cupos_disponibles,
+      },
     });
-
-    res.json(out);
-  });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: "Error al obtener curso" });
+  }
 });
 
 // ===============================
-// GET /api/cursos/:id
+// 3) POST /api/cursos  (Admin)
 // ===============================
-router.get("/:id", (req, res) => {
-  const id = toNum(req.params.id, 0);
-  if (!id) return res.status(400).json({ error: "ID inválido" });
+router.post("/", adminOnly, async (req, res) => {
+  try {
+    const nombre = normStr(req.body?.nombre);
+    const nivel = normStr(req.body?.nivel);
+    const nro_clases = toInt(req.body?.nro_clases, null);
+    const dias = normStr(req.body?.dias);
+    const horario_por_dia = normStr(req.body?.horario_por_dia);
 
-  const sql = `
-    SELECT
-      c.*,
-      i.nombre AS instructor_nombre,
-      (
-        SELECT COUNT(1)
-        FROM inscripciones ins
-        WHERE ins.curso_id = c.id AND ins.estado = 'Activa'
-      ) AS inscritos_activos
-    FROM cursos c
-    LEFT JOIN instructores i ON i.id = c.instructor_id
-    WHERE c.id = ?
-    LIMIT 1
-  `;
+    const precio = toNum(req.body?.precio, null);
+    const cupo = toInt(req.body?.cupo, null);
+    const estado = normStr(req.body?.estado) || "Activo";
+    const instructor_id = toInt(req.body?.instructor_id, null);
 
-  db.get(sql, [id], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!row) return res.status(404).json({ error: "Curso no encontrado" });
+    if (!nombre) return res.status(400).json({ ok: false, error: "nombre es obligatorio" });
+    if (precio === null || precio < 0) return res.status(400).json({ ok: false, error: "precio inválido (>= 0)" });
+    if (cupo === null || cupo < 0) return res.status(400).json({ ok: false, error: "cupo inválido (>= 0)" });
 
-    const cupo = toNum(row.cupo, 0);
-    const act = toNum(row.inscritos_activos, 0);
+    if (!ESTADOS_CURSO.has(estado)) {
+      return res.status(400).json({ ok: false, error: "estado inválido (Activo|Inactivo|Finalizado)" });
+    }
 
-    res.json({
-      ...row,
-      inscritos_activos: act,
-      inscritos_texto: `${act}/${cupo}`,
+    if (!instructor_id) {
+      return res.status(400).json({ ok: false, error: "instructor_id es obligatorio" });
+    }
+
+    const instCheck = await validateInstructorActivo(instructor_id);
+    if (!instCheck.ok) {
+      return res.status(instCheck.code).json({ ok: false, error: instCheck.error });
+    }
+
+    // (Opcional) Duplicado lógico: nombre+nivel
+    if (nivel) {
+      const dup = await dbGet(
+        `SELECT id FROM cursos WHERE LOWER(nombre) = LOWER(?) AND LOWER(nivel) = LOWER(?) LIMIT 1`,
+        [nombre, nivel]
+      );
+      if (dup) {
+        return res.status(409).json({ ok: false, error: "Ya existe un curso con el mismo nombre y nivel" });
+      }
+    }
+
+    const r = await dbRun(
+      `
+      INSERT INTO cursos
+        (nombre, nivel, nro_clases, dias, horario_por_dia, precio, cupo, estado, instructor_id)
+      VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        nombre,
+        nivel,
+        nro_clases,
+        dias,
+        horario_por_dia,
+        precio,
+        cupo,
+        estado,
+        instructor_id,
+      ]
+    );
+
+    const created = await dbGet(
+      `
+      SELECT c.*, i.nombre AS instructor_nombre
+      FROM cursos c
+      JOIN instructores i ON i.id = c.instructor_id
+      WHERE c.id = ?
+      `,
+      [r.lastID]
+    );
+
+    return res.status(201).json({ ok: true, data: created });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: "Error al crear curso" });
+  }
+});
+
+// ===============================
+// 4) PUT /api/cursos/:id (Admin)
+// ===============================
+router.put("/:id", adminOnly, async (req, res) => {
+  try {
+    const id = toInt(req.params.id, null);
+    if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
+
+    const current = await dbGet(`SELECT * FROM cursos WHERE id = ?`, [id]);
+    if (!current) return res.status(404).json({ ok: false, error: "Curso no encontrado" });
+
+    const nombre = req.body?.nombre !== undefined ? normStr(req.body.nombre) : current.nombre;
+    const nivel = req.body?.nivel !== undefined ? normStr(req.body.nivel) : current.nivel;
+    const nro_clases = req.body?.nro_clases !== undefined ? toInt(req.body.nro_clases, null) : current.nro_clases;
+    const dias = req.body?.dias !== undefined ? normStr(req.body.dias) : current.dias;
+    const horario_por_dia =
+      req.body?.horario_por_dia !== undefined ? normStr(req.body.horario_por_dia) : current.horario_por_dia;
+
+    const precio = req.body?.precio !== undefined ? toNum(req.body.precio, null) : Number(current.precio);
+    const cupo = req.body?.cupo !== undefined ? toInt(req.body.cupo, null) : Number(current.cupo);
+    const estado = req.body?.estado !== undefined ? normStr(req.body.estado) : current.estado;
+    const instructor_id =
+      req.body?.instructor_id !== undefined ? toInt(req.body.instructor_id, null) : current.instructor_id;
+
+    if (!nombre) return res.status(400).json({ ok: false, error: "nombre no puede quedar vacío" });
+    if (precio === null || precio < 0) return res.status(400).json({ ok: false, error: "precio inválido (>= 0)" });
+    if (cupo === null || cupo < 0) return res.status(400).json({ ok: false, error: "cupo inválido (>= 0)" });
+
+    if (!ESTADOS_CURSO.has(estado)) {
+      return res.status(400).json({ ok: false, error: "estado inválido (Activo|Inactivo|Finalizado)" });
+    }
+
+    if (!instructor_id) {
+      return res.status(400).json({ ok: false, error: "instructor_id es obligatorio" });
+    }
+
+    // Validar instructor si cambian o siempre (seguro)
+    const instCheck = await validateInstructorActivo(instructor_id);
+    if (!instCheck.ok) {
+      return res.status(instCheck.code).json({ ok: false, error: instCheck.error });
+    }
+
+    // Regla: si cambian cupo, no permitir cupo < inscripciones activas actuales
+    const inscripciones_activas = await getInscripcionesActivasCount(id);
+    if (cupo < inscripciones_activas) {
+      return res.status(409).json({ ok: false, error: "Cupo menor a inscripciones activas" });
+    }
+
+    await dbRun(
+      `
+      UPDATE cursos
+      SET
+        nombre = ?,
+        nivel = ?,
+        nro_clases = ?,
+        dias = ?,
+        horario_por_dia = ?,
+        precio = ?,
+        cupo = ?,
+        estado = ?,
+        instructor_id = ?
+      WHERE id = ?
+      `,
+      [
+        nombre,
+        nivel,
+        nro_clases,
+        dias,
+        horario_por_dia,
+        precio,
+        cupo,
+        estado,
+        instructor_id,
+        id,
+      ]
+    );
+
+    const updated = await dbGet(
+      `
+      SELECT c.*, i.nombre AS instructor_nombre
+      FROM cursos c
+      JOIN instructores i ON i.id = c.instructor_id
+      WHERE c.id = ?
+      `,
+      [id]
+    );
+
+    const cupos_disponibles = Math.max(0, cupo - inscripciones_activas);
+
+    return res.json({
+      ok: true,
+      data: {
+        ...updated,
+        inscripciones_activas,
+        cupos_disponibles,
+      },
     });
-  });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: "Error al actualizar curso" });
+  }
 });
 
 // ===============================
-// POST /api/cursos
-// body esperado (desde tu modal):
-// { nombre, instructor_id, fecha_inicio, nro_clases, cupo, dias, hora_inicio, duracion, precio, estado }
-// Nota: fecha/hora/duracion se guardan dentro de horario_por_dia
+// 5) DELETE /api/cursos/:id (Admin) -> soft delete
 // ===============================
-router.post("/", (req, res) => {
-  const b = req.body || {};
+router.delete("/:id", adminOnly, async (req, res) => {
+  try {
+    const id = toInt(req.params.id, null);
+    if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
-  const nombre = String(b.nombre || "").trim();
-  const instructor_id = toNum(b.instructor_id, null);
-  const nro_clases = toNum(b.nro_clases, 0);
-  const cupo = toNum(b.cupo, 0);
-  const dias = String(b.dias || "").trim();
+    const exists = await dbGet(`SELECT id FROM cursos WHERE id = ?`, [id]);
+    if (!exists) return res.status(404).json({ ok: false, error: "Curso no encontrado" });
 
-  const precio = Number(b.precio);
-  const precioOk = Number.isFinite(precio) ? precio : 0;
-
-  const estado = String(b.estado || "Programado").trim();
-  const fecha_inicio = String(b.fecha_inicio || "").trim() || nowISODate();
-  const hora_inicio = String(b.hora_inicio || "").trim();
-  const duracion = toNum(b.duracion, 0);
-
-  if (!nombre) return res.status(400).json({ error: "nombre es obligatorio" });
-  if (!instructor_id) return res.status(400).json({ error: "instructor_id es obligatorio" });
-  if (nro_clases <= 0) return res.status(400).json({ error: "nro_clases debe ser >= 1" });
-  if (cupo <= 0) return res.status(400).json({ error: "cupo debe ser >= 1" });
-  if (!dias) return res.status(400).json({ error: "dias es obligatorio" });
-  if (!hora_inicio) return res.status(400).json({ error: "hora_inicio es obligatorio" });
-  if (duracion <= 0) return res.status(400).json({ error: "duracion debe ser >= 1" });
-
-  const horario_por_dia = buildHorario({ fecha_inicio, hora_inicio, duracion });
-
-  const sql = `
-    INSERT INTO cursos (nombre, nro_clases, dias, horario_por_dia, precio, cupo, estado, instructor_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `;
-
-  const params = [nombre, nro_clases, dias, horario_por_dia, precioOk, cupo, estado, instructor_id];
-
-  db.run(sql, params, function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.status(201).json({ ok: true, id: this.lastID });
-  });
+    await dbRun(`UPDATE cursos SET estado = 'Inactivo' WHERE id = ?`, [id]);
+    return res.json({ ok: true, data: true });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: "Error al inactivar curso" });
+  }
 });
 
 // ===============================
-// PUT /api/cursos/:id
-// Si mandas fecha/hora/duracion, reconstruye horario_por_dia.
-// Si NO mandas, deja el horario como estaba.
+// 6) GET /api/cursos/:id/inscritos
+// Query: estado=Activa|Inactiva|todas (default Activa)
 // ===============================
-router.put("/:id", (req, res) => {
-  const id = toNum(req.params.id, 0);
-  if (!id) return res.status(400).json({ error: "ID inválido" });
+router.get("/:id/inscritos", async (req, res) => {
+  try {
+    const curso_id = toInt(req.params.id, null);
+    if (!curso_id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
-  const b = req.body || {};
+    const curso = await dbGet(`SELECT id FROM cursos WHERE id = ?`, [curso_id]);
+    if (!curso) return res.status(404).json({ ok: false, error: "Curso no encontrado" });
 
-  const nombre = String(b.nombre || "").trim();
-  const instructor_id = toNum(b.instructor_id, null);
-  const nro_clases = toNum(b.nro_clases, 0);
-  const cupo = toNum(b.cupo, 0);
-  const dias = String(b.dias || "").trim();
+    const estadoQ = String(req.query.estado || "Activa").trim();
+    let whereEstado = "";
+    const params = [curso_id];
 
-  const precio = Number(b.precio);
-  const precioOk = Number.isFinite(precio) ? precio : 0;
+    if (estadoQ === "Activa") {
+      whereEstado = "AND ins.estado = 'Activa'";
+    } else if (estadoQ === "Inactiva") {
+      whereEstado = "AND ins.estado = 'Inactiva'";
+    } else if (estadoQ === "todas" || estadoQ === "Todas") {
+      whereEstado = "";
+    } else {
+      return res.status(400).json({ ok: false, error: "estado inválido (Activa|Inactiva|todas)" });
+    }
 
-  const estado = String(b.estado || "Programado").trim();
+    // Nota: el ERD de ALUMNOS aquí no incluye telefono, pero tu requisito lo pide.
+    // Asumimos que existe alumnos.telefono en tu tabla (como en tu ERD de alumnos).
+    const rows = await dbAll(
+      `
+      SELECT
+        ins.id AS inscripcion_id,
+        ins.fecha_inscripcion,
+        ins.estado,
+        a.id AS alumno_id,
+        a.nombre AS alumno_nombre,
+        a.documento AS alumno_documento,
+        a.telefono AS alumno_telefono
+      FROM inscripciones ins
+      JOIN alumnos a ON a.id = ins.alumno_id
+      WHERE ins.curso_id = ?
+      ${whereEstado}
+      ORDER BY a.nombre ASC
+      `,
+      params
+    );
 
-  // opcionales (solo si quieres actualizar horario)
-  const fecha_inicio = String(b.fecha_inicio || "").trim();
-  const hora_inicio = String(b.hora_inicio || "").trim();
-  const duracion = toNum(b.duracion, 0);
-
-  if (!nombre) return res.status(400).json({ error: "nombre es obligatorio" });
-  if (!instructor_id) return res.status(400).json({ error: "instructor_id es obligatorio" });
-  if (nro_clases <= 0) return res.status(400).json({ error: "nro_clases debe ser >= 1" });
-  if (cupo <= 0) return res.status(400).json({ error: "cupo debe ser >= 1" });
-  if (!dias) return res.status(400).json({ error: "dias es obligatorio" });
-
-  const horario_por_dia = (fecha_inicio || hora_inicio || duracion)
-    ? buildHorario({ fecha_inicio, hora_inicio, duracion })
-    : null;
-
-  const sql = `
-    UPDATE cursos
-    SET
-      nombre = ?,
-      nro_clases = ?,
-      dias = ?,
-      horario_por_dia = COALESCE(?, horario_por_dia),
-      precio = ?,
-      cupo = ?,
-      estado = ?,
-      instructor_id = ?,
-      updated_at = datetime('now')
-    WHERE id = ?
-  `;
-
-  const params = [
-    nombre,
-    nro_clases,
-    dias,
-    horario_por_dia,
-    precioOk,
-    cupo,
-    estado,
-    instructor_id,
-    id
-  ];
-
-  db.run(sql, params, function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    if (this.changes === 0) return res.status(404).json({ error: "Curso no encontrado" });
-    res.json({ ok: true });
-  });
+    return res.json({ ok: true, data: rows });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: "Error al listar inscritos" });
+  }
 });
 
 // ===============================
-// DELETE /api/cursos/:id
+// 7) GET /api/cursos/:id/cupo
 // ===============================
-router.delete("/:id", (req, res) => {
-  const id = toNum(req.params.id, 0);
-  if (!id) return res.status(400).json({ error: "ID inválido" });
+router.get("/:id/cupo", async (req, res) => {
+  try {
+    const curso_id = toInt(req.params.id, null);
+    if (!curso_id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
-  db.run("DELETE FROM cursos WHERE id=?", [id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    if (this.changes === 0) return res.status(404).json({ error: "Curso no encontrado" });
-    res.json({ ok: true });
-  });
+    const curso = await dbGet(`SELECT id, cupo FROM cursos WHERE id = ?`, [curso_id]);
+    if (!curso) return res.status(404).json({ ok: false, error: "Curso no encontrado" });
+
+    const cupo = Number(curso.cupo || 0);
+    const inscripciones_activas = await getInscripcionesActivasCount(curso_id);
+    const cupos_disponibles = Math.max(0, cupo - inscripciones_activas);
+
+    return res.json({
+      ok: true,
+      data: { cupo, inscripciones_activas, cupos_disponibles },
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: "Error al calcular cupo" });
+  }
 });
 
 module.exports = router;
+
+/*
+Cómo “todo conecta”:
+- Cursos ↔ Instructores: se hace JOIN por cursos.instructor_id = instructores.id para devolver instructor_nombre.
+- Cupos: inscripciones_activas = COUNT(*) en inscripciones WHERE curso_id=? AND estado='Activa';
+  cupos_disponibles = cursos.cupo - inscripciones_activas (nunca negativo).
+- Validación: al crear/editar, instructor_id debe existir y estar Activo; al editar cupo, no puede ser menor a inscripciones activas.
+
+Qué consume el frontend:
+- Listado: GET /api/cursos?withStats=1 (y filtros q/estado/instructor_id/limit/offset)
+- Detalle:  GET /api/cursos/:id
+- Cupo:    GET /api/cursos/:id/cupo
+- Inscritos: GET /api/cursos/:id/inscritos?estado=Activa
+
+Seguridad:
+- Todas las rutas requieren sesión (authRequired).
+- Mutaciones (POST/PUT/DELETE) requieren rol Admin (adminOnly).
+- Regla de negocio para nuevas inscripciones: si curso.estado != 'Activo', no debería permitir inscribir (se valida en inscripciones.routes.js).
+*/
