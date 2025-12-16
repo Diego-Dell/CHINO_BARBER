@@ -123,3 +123,33 @@ router.post("/", (req, res) => {
 });
 
 module.exports = router;
+
+
+router.put("/:id", (req, res) => {
+  const id = Number(req.params.id);
+  const { nombre, documento, telefono, email, fecha_ingreso, estado } = req.body;
+
+  const sql = `
+    UPDATE alumnos
+    SET nombre = ?, documento = ?, telefono = ?, email = ?, fecha_ingreso = ?, estado = ?
+    WHERE id = ?
+  `;
+
+  db.run(
+    sql,
+    [
+      (nombre || "").trim(),
+      (documento || "").trim(),
+      telefono || "",
+      email || "",
+      fecha_ingreso || null,
+      estado || "Activo",
+      id
+    ],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: "Alumno no encontrado" });
+      res.json({ ok: true });
+    }
+  );
+});

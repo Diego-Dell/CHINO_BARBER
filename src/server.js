@@ -289,3 +289,101 @@ app.delete("/api/alumnos/:id", authRequired, adminOnly, (req, res) => {
     res.json({ ok: true });
   });
 });
+
+
+// ==============================
+// API: INSTRUCTORES (CRUD real)
+// ==============================
+app.get("/api/instructores", authRequired, (req, res) => {
+  const q = String(req.query.q || "").trim();
+  const estado = String(req.query.estado || "").trim();
+
+  const where = ["1=1"];
+  const params = [];
+
+  if (q) {
+    where.push("(nombre LIKE ? OR documento LIKE ?)");
+    const like = `%${q}%`;
+    params.push(like, like);
+  }
+
+  if (estado) {
+    where.push("estado = ?");
+    params.push(estado);
+  }
+
+  const sql = `
+    SELECT * FROM instructores
+    WHERE ${where.join(" AND ")}
+    ORDER BY nombre ASC
+  `;
+
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+app.post("/api/instructores", authRequired, (req, res) => {
+  const b = req.body || {};
+  const nombre = String(b.nombre || "").trim();
+  if (!nombre) return res.status(400).json({ error: "El nombre es obligatorio" });
+
+  const documento = String(b.documento || "").trim();
+  const telefono = String(b.telefono || "").trim();
+  const email = String(b.email || "").trim();
+  const estado = String(b.estado || "Activo").trim();
+
+  const sql = `
+    INSERT INTO instructores (nombre, documento, telefono, email, estado)
+    VALUES (?, ?, ?, ?, ?)
+  `;
+
+  db.run(sql, [nombre, documento, telefono, email, estado], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.status(201).json({ ok: true, id: this.lastID });
+  });
+});
+
+app.put("/api/instructores/:id", authRequired, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+
+  const b = req.body || {};
+  const nombre = String(b.nombre || "").trim();
+  if (!nombre) return res.status(400).json({ error: "El nombre es obligatorio" });
+
+  const documento = String(b.documento || "").trim();
+  const telefono = String(b.telefono || "").trim();
+  const email = String(b.email || "").trim();
+  const estado = String(b.estado || "Activo").trim();
+
+  const sql = `
+    UPDATE instructores
+    SET nombre=?,
+        documento=?,
+        telefono=?,
+        email=?,
+        estado=?,
+        updated_at=datetime('now')
+    WHERE id=?
+  `;
+
+  db.run(sql, [nombre, documento, telefono, email, estado, id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    if (this.changes === 0) return res.status(404).json({ error: "Instructor no encontrado" });
+    res.json({ ok: true });
+  });
+});
+
+// (Opcional) eliminar instructor (solo Admin)
+app.delete("/api/instructores/:id", authRequired, adminOnly, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+
+  db.run("DELETE FROM instructores WHERE id=?", [id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    if (this.changes === 0) return res.status(404).json({ error: "Instructor no encontrado" });
+    res.json({ ok: true });
+  });
+});
