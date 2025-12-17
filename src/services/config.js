@@ -20,7 +20,13 @@ const ROOT_DIR_FROM_CWD = path.resolve(process.cwd());
 // Caso contrario, usar el root derivado desde __dirname.
 function pickRootDir() {
   try {
-    const candidate = path.join(ROOT_DIR_FROM_CWD, "services");
+    const cand1 = path.join(ROOT_DIR_FROM_CWD, "services");
+      const cand2 = path.join(ROOT_DIR_FROM_CWD, "src", "services");
+      if ((fs.existsSync(cand1) && fs.statSync(cand1).isDirectory()) ||
+          (fs.existsSync(cand2) && fs.statSync(cand2).isDirectory())) {
+        return ROOT_DIR_FROM_CWD;
+      }
+
     if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
       return ROOT_DIR_FROM_CWD;
     }

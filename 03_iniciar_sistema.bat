@@ -52,7 +52,10 @@ IF NOT EXIST src\db\database.sqlite (
 :: Iniciar servidor
 :: =========================
 echo 🚀 Iniciando servidor...
-start "CHINO_BARBER_SERVER" cmd /k node src\server.js
+start "CHINO_BARBER_SERVER" cmd /k node src\services\server.js
+
+
+
 
 :: =========================
 :: Esperar un poco
@@ -64,6 +67,7 @@ timeout /t 2 >nul
 :: =========================
 echo 🌐 Abriendo sistema en el navegador...
 start http://localhost:3000
+
 
 echo.
 echo ✅ SISTEMA INICIADO CORRECTAMENTE

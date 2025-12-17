@@ -131,20 +131,20 @@ app.use(
 // Frontend estático
 // ==============================
 ensureDir(config.PUBLIC_DIR);
+// --- STATIC ---
 app.use(express.static(config.PUBLIC_DIR));
 
-// Root: login si no hay sesión, index si hay
+// Raíz: sirve login.html si existe, si no index.html
 app.get("/", (req, res) => {
-  const hasSession = !!(req.session && req.session.user);
-  const loginPath = path.join(config.PUBLIC_DIR, "login.html");
-  const indexPath = path.join(config.PUBLIC_DIR, "index.html");
+  const login = path.join(config.PUBLIC_DIR, "login.html");
+  const index = path.join(config.PUBLIC_DIR, "index.html");
 
-  if (!hasSession) {
-    // Si no existe login.html, intenta index.html
-    return safeSendFile(res, existsFile(loginPath) ? loginPath : indexPath);
-  }
-  return safeSendFile(res, existsFile(indexPath) ? indexPath : loginPath);
+  if (fs.existsSync(login)) return res.sendFile(login);
+  if (fs.existsSync(index)) return res.sendFile(index);
+
+  return res.status(404).send("File not found");
 });
+
 
 // ==============================
 // Protección simple de páginas HTML (opcional pero útil)
