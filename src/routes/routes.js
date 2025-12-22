@@ -8,7 +8,6 @@ const router = express.Router();
 // Middleware base API
 // ===============================
 router.use((req, res, next) => {
-  // Evita cache raro del navegador en endpoints API
   res.setHeader("Cache-Control", "no-store");
   next();
 });
@@ -24,19 +23,14 @@ router.get("/health", (req, res) => {
   });
 });
 
-router.get("/whoami", (req, res) => {
-  const user = req.session && req.session.user ? req.session.user : null;
-  return res.json({ ok: true, data: { user } });
-});
+router.get("/whoami", (req, res) =>
+  res.json({ ok: true, data: { user: null } })
+);
 
 // ===============================
-// Montaje de módulos (CRÍTICO)
-// Cada módulo exporta un router con rutas relativas ("/").
-// Aquí definimos los prefijos.
+// Montaje de módulos
 // ===============================
 function loadModule(file, envFlag) {
-  // Permite desactivar módulos por env (opcional):
-  // DISABLE_MODULE_ALUMNOS=true, DISABLE_MODULE_PAGOS=true, etc.
   if (envFlag && String(process.env[envFlag] || "").toLowerCase() === "true") {
     console.warn(`[API] Module disabled by env: ${file} (${envFlag}=true)`);
     return null;
@@ -45,8 +39,8 @@ function loadModule(file, envFlag) {
   try {
     return require(file);
   } catch (err) {
-    // Error claro al iniciar (por defecto)
-    const allowMissing = String(process.env.ALLOW_MISSING_MODULES || "").toLowerCase() === "true";
+    const allowMissing =
+      String(process.env.ALLOW_MISSING_MODULES || "").toLowerCase() === "true";
     const msg = `[API] Failed to load module: ${file} -> ${err.message}`;
     if (allowMissing) {
       console.error(msg);
@@ -56,10 +50,8 @@ function loadModule(file, envFlag) {
   }
 }
 
-// auth primero (para login/me/logout)
-const authRouter = loadModule("./auth.routes.js", "DISABLE_MODULE_AUTH");
-if (authRouter) router.use("/auth", authRouter);
-
+// ❌ SIN LOGIN: no auth.routes.js
+// ✅ módulos CRUD
 const alumnosRouter = loadModule("./alumnos.routes.js", "DISABLE_MODULE_ALUMNOS");
 if (alumnosRouter) router.use("/alumnos", alumnosRouter);
 
@@ -94,25 +86,10 @@ const settingsRouter = loadModule("./settings.routes.js", "DISABLE_MODULE_SETTIN
 if (settingsRouter) router.use("/settings", settingsRouter);
 
 // ===============================
-// 404 API (solo dentro de /api)
+// 404 API
 // ===============================
 router.use((req, res) => {
   return res.status(404).json({ ok: false, error: "API route not found" });
 });
 
-// Nota: NO ponemos error-handler (4 args) aquí porque ya existe uno global en services/server.js.
-// Si quisieras tener uno aquí, asegúrate de no duplicar la lógica (para evitar doble respuesta).
-
 module.exports = router;
-
-/*
-Uso en services/server.js:
-  app.use("/api", require("./src/routes/routes"));
-
-Cada módulo (*.routes.js) define rutas relativas (ej: router.get("/")),
-por eso aquí se define el prefijo (/alumnos, /cursos, etc.).
-
-Diagnóstico:
-- GET /api/health  -> verifica que la API responde
-- GET /api/whoami  -> verifica sesión (req.session.user) sin fallar si no hay login
-*/

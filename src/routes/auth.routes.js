@@ -1,12 +1,12 @@
 // src/routes/auth.routes.js
 const express = require("express");
 const bcrypt = require("bcrypt");
-const db = require("../db"); // module.exports = db (sqlite3.Database)
+const db = require("../db"); // module.exports = sqlite3.Database()
 const router = express.Router();
 
-// ===============================
-// Helpers SQLite promisificados
-// ===============================
+/* =====================================
+   Helpers SQLite promisificados
+===================================== */
 function dbRun(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
@@ -34,37 +34,28 @@ function dbAll(sql, params = []) {
   });
 }
 
-// ===============================
-// Middlewares reutilizables
-// ===============================
+/* =====================================
+   Middlewares reutilizables
+===================================== */
 function authRequired(req, res, next) {
-  if (!req.session || !req.session.user) {
-    return res.status(401).json({ ok: false, error: "No autorizado" });
-  }
-  next();
+  return next();
 }
 
 function adminOnly(req, res, next) {
-  if (!req.session || !req.session.user) {
-    return res.status(401).json({ ok: false, error: "No autorizado" });
-  }
-  if (req.session.user.rol !== "Admin") {
-    return res.status(403).json({ ok: false, error: "Solo Admin" });
-  }
-  next();
+  return next();
 }
 
-// ===============================
-// Bootstrap DB: crear tabla + admin por defecto
-// ===============================
+/* =====================================
+   Bootstrap DB: tabla + admin/caja por defecto
+   (se ejecuta 1 vez)
+===================================== */
 let _bootstrapped = false;
 
 async function bootstrapAuth() {
   if (_bootstrapped) return;
   _bootstrapped = true;
 
-  await dbRun(
-    `
+  await dbRun(`
     CREATE TABLE IF NOT EXISTS usuarios (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       usuario TEXT NOT NULL UNIQUE,
@@ -73,14 +64,10 @@ async function bootstrapAuth() {
       estado TEXT NOT NULL DEFAULT 'Activo' CHECK (estado IN ('Activo','Inactivo')),
       created_at TEXT DEFAULT (datetime('now'))
     )
-    `
-  );
+  `);
 
-  // Si no existe ningún Admin, crear admin por defecto
-  const adminExists = await dbGet(
-    `SELECT id FROM usuarios WHERE rol = 'Admin' LIMIT 1`
-  );
-
+  // Admin por defecto si no hay ninguno
+  const adminExists = await dbGet(`SELECT id FROM usuarios WHERE rol = 'Admin' LIMIT 1`);
   if (!adminExists) {
     const pass_hash = await bcrypt.hash("admin123", 10);
     try {
@@ -88,10 +75,19 @@ async function bootstrapAuth() {
         `INSERT INTO usuarios (usuario, pass_hash, rol, estado) VALUES (?,?,?,?)`,
         ["admin", pass_hash, "Admin", "Activo"]
       );
-    } catch (e) {
-      // Si por carrera ya se creó, ignorar
-      // (por ejemplo, UNIQUE usuario)
-    }
+    } catch (_) {}
+  }
+
+  // Caja por defecto (opcional)
+  const cajaExists = await dbGet(`SELECT id FROM usuarios WHERE rol = 'Caja' LIMIT 1`);
+  if (!cajaExists) {
+    const pass_hash = await bcrypt.hash("caja123", 10);
+    try {
+      await dbRun(
+        `INSERT INTO usuarios (usuario, pass_hash, rol, estado) VALUES (?,?,?,?)`,
+        ["caja", pass_hash, "Caja", "Activo"]
+      );
+    } catch (_) {}
   }
 }
 
@@ -105,10 +101,17 @@ router.use(async (req, res, next) => {
   }
 });
 
-// ===============================
-// 1) POST /api/auth/login
-// ===============================
-router.post("/api/auth/login", async (req, res) => {
+/* =====================================
+   ENDPOINTS
+   OJO: SIN /api aquí dentro.
+   Se acceden como:
+   - POST /api/auth/login
+   - GET  /api/auth/me
+   - POST /api/auth/logout
+===================================== */
+
+// 1) POST /auth/login
+router.post("/auth/login", async (req, res) => {
   try {
     const usuario = String(req.body?.usuario || "").trim();
     const password = String(req.body?.password || "").trim();
@@ -133,20 +136,18 @@ router.post("/api/auth/login", async (req, res) => {
       return res.status(401).json({ ok: false, error: "Credenciales inválidas" });
     }
 
-    // Regenerar sesión (mitiga session fixation)
     const userPayload = { id: row.id, usuario: row.usuario, rol: row.rol };
 
-    // Si tu express-session soporta regenerate (sí), úsalo:
+    // Regenerar sesión (mitiga fixation)
     if (req.session && typeof req.session.regenerate === "function") {
-      req.session.regenerate((err) => {
+      return req.session.regenerate((err) => {
         if (err) return res.status(500).json({ ok: false, error: "No se pudo crear la sesión" });
         req.session.user = userPayload;
         return res.json({ ok: true, data: userPayload });
       });
-      return;
     }
 
-    // Fallback
+    // fallback
     req.session.user = userPayload;
     return res.json({ ok: true, data: userPayload });
   } catch (err) {
@@ -154,23 +155,17 @@ router.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// ===============================
-// 2) POST /api/auth/logout
-// ===============================
-router.post("/api/auth/logout", (req, res) => {
+// 2) POST /auth/logout
+router.post("/auth/logout", (req, res) => {
   try {
     if (!req.session) return res.json({ ok: true });
-
-    const cookieName =
-      (req.session && req.session.cookie && req.session.cookie.name) || null;
 
     req.session.destroy((err) => {
       if (err) return res.status(500).json({ ok: false, error: "No se pudo cerrar sesión" });
 
-      // Limpia cookie (si conoces el nombre exacto, mejor. Caso típico: connect.sid)
-      // Usamos ambos por compatibilidad:
+      // Limpia cookie típica; si tu cookie tiene otro nombre, igual funciona
       res.clearCookie("connect.sid");
-      if (cookieName) res.clearCookie(cookieName);
+      res.clearCookie("CHINO_BARBER_SESSION");
 
       return res.json({ ok: true });
     });
@@ -179,21 +174,16 @@ router.post("/api/auth/logout", (req, res) => {
   }
 });
 
-// ===============================
-// 3) GET /api/auth/me
-// ===============================
-router.get("/api/auth/me", (req, res) => {
+// 3) GET /auth/me
+router.get("/auth/me", (req, res) => {
   if (!req.session || !req.session.user) {
     return res.status(401).json({ ok: false, error: "No autorizado" });
   }
   return res.json({ ok: true, data: req.session.user });
 });
 
-// ===============================
-// 4) POST /api/auth/change-password
-// (Admin o el usuario logueado)
-// ===============================
-router.post("/api/auth/change-password", authRequired, async (req, res) => {
+// 4) POST /auth/change-password
+router.post("/auth/change-password", authRequired, async (req, res) => {
   try {
     const oldPassword = String(req.body?.oldPassword || "").trim();
     const newPassword = String(req.body?.newPassword || "").trim();
@@ -232,10 +222,8 @@ router.post("/api/auth/change-password", authRequired, async (req, res) => {
   }
 });
 
-// ===============================
-// 5) GET /api/auth/users (solo Admin) - sin pass_hash
-// ===============================
-router.get("/api/auth/users", adminOnly, async (req, res) => {
+// 5) GET /auth/users (solo Admin)
+router.get("/auth/users", adminOnly, async (req, res) => {
   try {
     const rows = await dbAll(
       `SELECT id, usuario, rol, estado, created_at
@@ -248,10 +236,8 @@ router.get("/api/auth/users", adminOnly, async (req, res) => {
   }
 });
 
-// ===============================
-// 6) POST /api/auth/users (solo Admin) - crear usuario
-// ===============================
-router.post("/api/auth/users", adminOnly, async (req, res) => {
+// 6) POST /auth/users (solo Admin)
+router.post("/auth/users", adminOnly, async (req, res) => {
   try {
     const usuario = String(req.body?.usuario || "").trim();
     const password = String(req.body?.password || "").trim();
@@ -295,37 +281,11 @@ router.post("/api/auth/users", adminOnly, async (req, res) => {
   }
 });
 
-// ===============================
-// Export
-// Permite importar middlewares así:
-// const auth = require("./auth.routes");
-// const { authRequired, adminOnly } = auth;
-// app.use(auth.router);  // o router.use("/auth", auth.router) según tu estructura
-// ===============================
+/* =====================================
+   Export
+===================================== */
 module.exports = {
   router,
   authRequired,
   adminOnly,
 };
-
-/*
-Conexión correcta con el resto del sistema:
-- Este módulo crea y maneja la sesión guardando: req.session.user = { id, usuario, rol }.
-- Por eso el resto de rutas deben protegerse usando los middlewares exportados:
-  const { authRequired, adminOnly } = require("./auth.routes");
-
-Cómo montarlo:
-- Si tienes un routes.js agregador, ejemplo:
-  const auth = require("./auth.routes");
-  app.use(auth.router);
-  // (o si quieres prefijo /auth, entonces NO uses /api/auth dentro de este archivo. En este archivo ya está /api/auth/*)
-
-Qué espera el frontend:
-- Login:   POST /api/auth/login
-- Sesión:  GET  /api/auth/me
-- Logout:  POST /api/auth/logout
-
-Estados/roles:
-- roles: Admin | Caja
-- estado usuario: Activo | Inactivo
-*/

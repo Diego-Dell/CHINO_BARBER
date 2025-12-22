@@ -1,249 +1,227 @@
-// ======================================================
-// INSTRUCTORES — Barber Chino
-// ======================================================
+const express = require("express");
+const db = require("../db");
+const router = express.Router();
 
-// ---------------- helpers ----------------
-async function fetchJSON(url, options = {}) {
-  const r = await fetch(url, options);
-  if (!r.ok) throw new Error(await r.text());
-  const ct = r.headers.get("content-type") || "";
-  return ct.includes("application/json") ? r.json() : null;
+// ===============================
+// Helpers DB
+// ===============================
+function dbRun(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) return reject(err);
+      resolve({ lastID: this.lastID, changes: this.changes });
+    });
+  });
+}
+function dbGet(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row || null)));
+  });
+}
+function dbAll(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows || [])));
+  });
+}
+function likeWrap(q) {
+  return `%${String(q || "").trim()}%`;
 }
 
-function esc(s) {
-  return String(s ?? "").replace(/[&<>"]/g, c => (
-    { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]
-  ));
-}
-
-function badgeEstado(estado) {
-  return estado === "Inactivo" ? "bg-secondary" : "bg-success";
-}
-
-// ---------------- DOM ----------------
-const tablaBody = document.querySelector("#tablaInstructores tbody");
-const lblResumen = document.getElementById("instResumen");
-
-const instBuscar = document.getElementById("instBuscar");
-const instEstado = document.getElementById("instEstado");
-const btnFiltrar = document.getElementById("btnFiltrarInst");
-const btnRefrescar = document.getElementById("btnRefrescarInstr");
-
-// crear
-const formInst = document.getElementById("formInst");
-const msgInst = document.getElementById("msgInst");
-const instNombre = document.getElementById("instNombre");
-const instCI = document.getElementById("instCI");
-const instTel = document.getElementById("instTel");
-const instEmail = document.getElementById("instEmail");
-const instEstadoForm = document.getElementById("instEstadoForm");
-
-// editar
-const formEdit = document.getElementById("formInstrEdit");
-const msgEdit = document.getElementById("msgEditInstr");
-const eId = document.getElementById("iEditId");
-const eNombre = document.getElementById("iEditNombre");
-const eCI = document.getElementById("iEditDocumento");
-const eTel = document.getElementById("iEditTelefono");
-const eEmail = document.getElementById("iEditEmail");
-const eEstado = document.getElementById("iEditEstado");
-
-let cache = [];
-
-// ======================================================
-// CARGAR INSTRUCTORES
-// ======================================================
-async function cargarInstructores() {
-  const params = new URLSearchParams();
-  if (instBuscar?.value.trim()) params.append("q", instBuscar.value.trim());
-  if (instEstado?.value) params.append("estado", instEstado.value);
-
-  let url = "/api/instructores";
-  if (params.toString()) url += "?" + params.toString();
-
+// ===============================
+// Asegurar tabla
+// - documento NOT NULL (porque tu DB así lo exige)
+// ===============================
+(async () => {
   try {
-    const data = await fetchJSON(url);
-    cache = Array.isArray(data) ? data : [];
-    renderTabla(cache);
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS instructores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        documento TEXT NOT NULL,
+        telefono TEXT,
+        email TEXT,
+        estado TEXT NOT NULL DEFAULT 'Activo',
+        created_at TEXT
+      )
+    `);
   } catch (e) {
-    console.error(e);
-    tablaBody.innerHTML =
-      `<tr><td colspan="7" class="text-center text-danger">Error al cargar instructores</td></tr>`;
-    if (lblResumen) lblResumen.textContent = "0 instructores";
+    console.error("[INSTRUCTORES] init table error:", e.message);
   }
-}
+})();
 
-// ======================================================
-// RENDER TABLA
-// ======================================================
-function renderTabla(rows) {
-  if (!rows.length) {
-    tablaBody.innerHTML =
-      `<tr><td colspan="7" class="text-center text-muted">Sin instructores</td></tr>`;
-    if (lblResumen) lblResumen.textContent = "0 instructores";
-    return;
-  }
+/**
+ * IMPORTANTE:
+ * /search debe ir antes de /:id
+ */
 
-  tablaBody.innerHTML = rows.map(i => `
-    <tr>
-      <td>${i.id}</td>
-      <td class="fw-semibold">${esc(i.nombre)}</td>
-      <td>${esc(i.documento || "")}</td>
-      <td>${esc(i.telefono || "")}</td>
-      <td>${esc(i.email || "")}</td>
-      <td>
-        <span class="badge ${badgeEstado(i.estado)}">${i.estado}</span>
-      </td>
-      <td>
-        <button class="btn btn-outline-primary btn-sm"
-          onclick="editarInstructor(${i.id})">
-          Editar
-        </button>
-      </td>
-    </tr>
-  `).join("");
-
-  if (lblResumen) {
-    lblResumen.textContent =
-      `${rows.length} instructor${rows.length !== 1 ? "es" : ""}`;
-  }
-}
-
-// ======================================================
-// EDITAR (ABRIR MODAL)
-// ======================================================
-window.editarInstructor = function (id) {
-  const inst = cache.find(x => Number(x.id) === Number(id));
-  if (!inst) return alert("Instructor no encontrado");
-
-  eId.value = inst.id;
-  eNombre.value = inst.nombre || "";
-  eCI.value = inst.documento || "";
-  eTel.value = inst.telefono || "";
-  eEmail.value = inst.email || "";
-  eEstado.value = inst.estado || "Activo";
-
-  msgEdit.textContent = "";
-  msgEdit.className = "text-muted small";
-
-  new bootstrap.Modal(
-    document.getElementById("modalInstrEdit")
-  ).show();
-};
-
-// ======================================================
-// CREAR INSTRUCTOR
-// ======================================================
-formInst?.addEventListener("submit", async e => {
-  e.preventDefault();
-
-  const payload = {
-    nombre: instNombre.value.trim(),
-    documento: instCI.value.trim(),
-    telefono: instTel.value.trim(),
-    email: instEmail.value.trim(),
-    estado: instEstadoForm.value
-  };
-
-  if (!payload.nombre) {
-    msgInst.textContent = "El nombre es obligatorio";
-    msgInst.className = "text-danger small";
-    return;
-  }
+// =====================================
+// GET /api/instructores/search?q=
+// =====================================
+router.get("/search", async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  const search = q ? likeWrap(q) : "%";
 
   try {
-    msgInst.textContent = "Guardando...";
-    msgInst.className = "text-muted small";
-
-    await fetchJSON("/api/instructores", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    msgInst.textContent = "Instructor registrado";
-    msgInst.className = "text-success small";
-
-    formInst.reset();
-    instEstadoForm.value = "Activo";
-
-    await cargarInstructores();
-
-    setTimeout(() => {
-      bootstrap.Modal.getInstance(
-        document.getElementById("modalInstructor")
-      )?.hide();
-      msgInst.textContent = "";
-    }, 700);
-
-  } catch (err) {
-    console.error(err);
-    msgInst.textContent = "Error al registrar";
-    msgInst.className = "text-danger small";
+    const rows = await dbAll(
+      `
+      SELECT * FROM instructores
+      WHERE (nombre LIKE ? OR documento LIKE ? OR telefono LIKE ? OR email LIKE ?)
+      ORDER BY id DESC
+      LIMIT 200
+      `,
+      [search, search, search, search]
+    );
+    return res.json(rows);
+  } catch (e) {
+    console.error("[INSTRUCTORES][SEARCH]", e);
+    return res.status(500).json({ ok: false, error: "Error al buscar instructores" });
   }
 });
 
-// ======================================================
-// GUARDAR EDICIÓN
-// ======================================================
-formEdit?.addEventListener("submit", async e => {
-  e.preventDefault();
-
-  const id = Number(eId.value);
-  const payload = {
-    nombre: eNombre.value.trim(),
-    documento: eCI.value.trim(),
-    telefono: eTel.value.trim(),
-    email: eEmail.value.trim(),
-    estado: eEstado.value
-  };
-
-  if (!payload.nombre) {
-    msgEdit.textContent = "El nombre es obligatorio";
-    msgEdit.className = "text-danger small";
-    return;
-  }
+// =====================================
+// GET /api/instructores
+// (soporta filtros q y estado si tu front los manda)
+// =====================================
+router.get("/", async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  const estado = String(req.query.estado || "").trim();
 
   try {
-    msgEdit.textContent = "Guardando...";
-    msgEdit.className = "text-muted small";
+    let sql = "SELECT * FROM instructores";
+    const params = [];
 
-    await fetchJSON(`/api/instructores/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    const where = [];
+    if (q) {
+      const s = likeWrap(q);
+      where.push("(nombre LIKE ? OR documento LIKE ? OR telefono LIKE ? OR email LIKE ?)");
+      params.push(s, s, s, s);
+    }
+    if (estado && estado !== "Todos") {
+      where.push("estado = ?");
+      params.push(estado);
+    }
 
-    await cargarInstructores();
+    if (where.length) sql += " WHERE " + where.join(" AND ");
+    sql += " ORDER BY id DESC LIMIT 200";
 
-    msgEdit.textContent = "Actualizado";
-    msgEdit.className = "text-success small";
-
-    setTimeout(() => {
-      bootstrap.Modal.getInstance(
-        document.getElementById("modalInstrEdit")
-      )?.hide();
-      msgEdit.textContent = "";
-    }, 600);
-
-  } catch (err) {
-    console.error(err);
-    msgEdit.textContent = "No se pudo guardar";
-    msgEdit.className = "text-danger small";
+    const rows = await dbAll(sql, params);
+    return res.json(rows);
+  } catch (e) {
+    console.error("[INSTRUCTORES][LIST]", e);
+    return res.status(500).json({ ok: false, error: "Error al obtener instructores" });
   }
 });
 
-// ======================================================
-// EVENTOS
-// ======================================================
-btnFiltrar?.addEventListener("click", cargarInstructores);
-btnRefrescar?.addEventListener("click", cargarInstructores);
+// =====================================
+// GET /api/instructores/:id
+// =====================================
+router.get("/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
-instBuscar?.addEventListener("keydown", e => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    cargarInstructores();
+  try {
+    const row = await dbGet("SELECT * FROM instructores WHERE id = ?", [id]);
+    if (!row) return res.status(404).json({ ok: false, error: "Instructor no encontrado" });
+    return res.json({ ok: true, data: row });
+  } catch (e) {
+    console.error("[INSTRUCTORES][GET]", e);
+    return res.status(500).json({ ok: false, error: "Error al obtener instructor" });
   }
 });
 
-document.addEventListener("DOMContentLoaded", cargarInstructores);
+// =====================================
+// POST /api/instructores
+// =====================================
+router.post("/", async (req, res) => {
+  // ✅ Acepta documento desde varias llaves por compatibilidad
+  const nombre = String(req.body?.nombre || "").trim();
+  const documento = String(
+    req.body?.documento || req.body?.ci || req.body?.documento_ci || ""
+  ).trim();
+
+  const telefono = req.body?.telefono ? String(req.body.telefono).trim() : null;
+  const email = req.body?.email ? String(req.body.email).trim() : null;
+  const estado = String(req.body?.estado || "Activo").trim();
+
+  if (!nombre) return res.status(400).json({ ok: false, error: "Nombre es obligatorio" });
+  if (!documento) return res.status(400).json({ ok: false, error: "Documento/CI es obligatorio" });
+
+  try {
+    // opcional: evitar duplicado por documento
+    const dup = await dbGet("SELECT id FROM instructores WHERE documento = ?", [documento]);
+    if (dup) return res.status(409).json({ ok: false, error: "El documento ya está registrado" });
+
+    const r = await dbRun(
+      `
+      INSERT INTO instructores (nombre, documento, telefono, email, estado, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      `,
+      [nombre, documento, telefono, email, estado, new Date().toISOString()]
+    );
+
+    return res.status(201).json({ ok: true, data: { id: r.lastID } });
+  } catch (e) {
+    console.error("[INSTRUCTORES][POST]", e);
+    return res.status(500).json({ ok: false, error: "Error al registrar instructor" });
+  }
+});
+
+// =====================================
+// PUT /api/instructores/:id
+// =====================================
+router.put("/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
+
+  const nombre = String(req.body?.nombre || "").trim();
+  const documento = String(
+    req.body?.documento || req.body?.ci || req.body?.documento_ci || ""
+  ).trim();
+
+  const telefono = req.body?.telefono ? String(req.body.telefono).trim() : null;
+  const email = req.body?.email ? String(req.body.email).trim() : null;
+  const estado = String(req.body?.estado || "Activo").trim();
+
+  if (!nombre) return res.status(400).json({ ok: false, error: "Nombre es obligatorio" });
+  if (!documento) return res.status(400).json({ ok: false, error: "Documento/CI es obligatorio" });
+
+  try {
+    const dup = await dbGet(
+      "SELECT id FROM instructores WHERE documento = ? AND id != ?",
+      [documento, id]
+    );
+    if (dup) return res.status(409).json({ ok: false, error: "El documento ya está registrado" });
+
+    await dbRun(
+      `
+      UPDATE instructores
+      SET nombre = ?, documento = ?, telefono = ?, email = ?, estado = ?
+      WHERE id = ?
+      `,
+      [nombre, documento, telefono, email, estado, id]
+    );
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("[INSTRUCTORES][PUT]", e);
+    return res.status(500).json({ ok: false, error: "Error al actualizar instructor" });
+  }
+});
+
+// =====================================
+// DELETE /api/instructores/:id (inactivar)
+// =====================================
+router.delete("/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
+
+  try {
+    await dbRun("UPDATE instructores SET estado = 'Inactivo' WHERE id = ?", [id]);
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("[INSTRUCTORES][DELETE]", e);
+    return res.status(500).json({ ok: false, error: "Error al inactivar instructor" });
+  }
+});
+
+module.exports = router;

@@ -2,13 +2,11 @@
   "name": "chino-barber",
   "version": "1.0.0",
   "main": "services/server.js",
-
-"scripts": {
-  "start": "node src/services/server.js",
-  "dev": "nodemon src/services/server.js",
-  "build": "pkg . --targets node18-win-x64 --output dist/BarberSchool.exe"
-}
-,
+  "scripts": {
+    "start": "node src/services/server.js",
+    "dev": "nodemon src/services/server.js",
+    "build": "pkg . --targets node18-win-x64 --output dist/BarberSchool.exe"
+  },
   "dependencies": {
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",

@@ -10,20 +10,11 @@ const router = express.Router();
 // const { authRequired, adminOnly } = require("./auth.routes"); // ajusta ruta según tu estructura
 // ===============================
 function authRequired(req, res, next) {
-  if (!req.session || !req.session.user) {
-    return res.status(401).json({ ok: false, error: "No autorizado" });
-  }
-  next();
+  return next();
 }
 
 function adminOnly(req, res, next) {
-  if (!req.session || !req.session.user) {
-    return res.status(401).json({ ok: false, error: "No autorizado" });
-  }
-  if (req.session.user.rol !== "Admin") {
-    return res.status(403).json({ ok: false, error: "Solo Admin" });
-  }
-  next();
+  return next();
 }
 
 router.use(authRequired);

@@ -26,10 +26,6 @@ function pickRootDir() {
           (fs.existsSync(cand2) && fs.statSync(cand2).isDirectory())) {
         return ROOT_DIR_FROM_CWD;
       }
-
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
-      return ROOT_DIR_FROM_CWD;
-    }
   } catch (_) {}
   return ROOT_DIR_FROM_SERVICES;
 }
