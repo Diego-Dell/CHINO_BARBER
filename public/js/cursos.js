@@ -4,14 +4,27 @@
 // Helpers
 // ===============================
 async function fetchJSON(url, options = {}) {
+  options.credentials = "include";
   const r = await fetch(url, options);
+
   const ct = r.headers.get("content-type") || "";
-  if (!r.ok) {
-    // intenta devolver json error si existe
-    const txt = await r.text();
-    throw new Error(txt || "Error HTTP");
+  const isJson = ct.includes("application/json");
+
+  if (r.status === 401) {
+    window.location.href = "/login.html";
+    return null;
   }
-  return ct.includes("application/json") ? r.json() : null;
+
+  if (!r.ok) {
+    let msg = `HTTP ${r.status}`;
+    try {
+      const body = isJson ? await r.json() : await r.text();
+      msg = body?.error || body?.message || body || msg;
+    } catch (_) {}
+    throw new Error(msg);
+  }
+
+  return isJson ? r.json() : null;
 }
 
 function esc(s) {
@@ -28,13 +41,19 @@ function bs(n) {
   return "Bs " + v.toFixed(2);
 }
 
-function badgeEstado(estado) {
+function badgeEstadoCurso(estado) {
   const e = String(estado || "").toLowerCase();
   if (e === "activo") return "bg-success";
   if (e === "en curso") return "bg-primary";
   if (e === "finalizado") return "bg-secondary";
   if (e === "cancelado") return "bg-danger";
   return "bg-warning text-dark"; // Programado u otros
+}
+
+function badgeEstadoInscripcion(estado) {
+  const st = String(estado || "");
+  const cls = st === "Activa" ? "bg-success" : "bg-secondary";
+  return `<span class="badge ${cls}">${esc(st)}</span>`;
 }
 
 function hoyISO() {
@@ -98,6 +117,14 @@ const cEditPrecio = document.getElementById("cEditPrecio");
 const cEditEstado = document.getElementById("cEditEstado");
 
 // ===============================
+// DOM (ver alumnos modal)
+// ===============================
+const modalVerAlumnosEl = document.getElementById("modalVerAlumnos");
+const tituloVerAlumnosEl = document.getElementById("tituloVerAlumnos");
+const tablaVerAlumnosEl = document.getElementById("tablaVerAlumnos");
+const msgVerAlumnosEl = document.getElementById("msgVerAlumnos");
+
+// ===============================
 // Cache
 // ===============================
 let cursosCache = [];
@@ -114,7 +141,7 @@ function fillSelectInstructores(selectEl, selectedId = "") {
     `<option value="">-- Seleccionar instructor --</option>`,
     ...instructoresCache.map((i) => {
       const id = String(i.id);
-      const nombre = i.nombre || i.instructor || "";
+      const nombre = i.nombre || "";
       return `<option value="${esc(id)}" ${id === sel ? "selected" : ""}>${esc(nombre)}</option>`;
     }),
   ];
@@ -123,16 +150,14 @@ function fillSelectInstructores(selectEl, selectedId = "") {
 }
 
 async function cargarInstructores() {
-  // tu API ya existe /api/instructores
   const data = await fetchJSON("/api/instructores");
   instructoresCache = Array.isArray(data) ? data : [];
-
   fillSelectInstructores(cursoInstructorId, "");
   fillSelectInstructores(cEditInstructorId, "");
 }
 
 // ===============================
-// Render tabla
+// Render tabla cursos
 // ===============================
 function renderCursos(rows) {
   if (!tbody) return;
@@ -146,7 +171,7 @@ function renderCursos(rows) {
   tbody.innerHTML = rows
     .map((c) => {
       const instructor = c.instructor_nombre || c.instructor || c.instructorName || "";
-      const inscritos = toNum(c.inscritos, 0); // depende de tu API
+      const inscritos = toNum(c.inscritos, 0);
       const cupo = toNum(c.cupo, 0);
       const insText = `${inscritos}/${cupo || 0}`;
 
@@ -159,12 +184,11 @@ function renderCursos(rows) {
         <td class="text-center">${toNum(c.nro_clases, 0)}</td>
         <td class="text-center">${esc(insText)}</td>
         <td class="text-end">${bs(c.precio)}</td>
-        <td><span class="badge ${badgeEstado(c.estado)}">${esc(c.estado || "Programado")}</span></td>
+        <td><span class="badge ${badgeEstadoCurso(c.estado)}">${esc(c.estado || "Programado")}</span></td>
         <td>
           <div class="d-flex gap-2">
-            <button type="button" class="btn btn-outline-primary btn-sm" onclick="abrirEditarCurso(${c.id})">
-              Editar
-            </button>
+            <button class="btn btn-outline-primary btn-sm" onclick="abrirEditarCurso(${c.id})">Editar</button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="verAlumnosCurso(${c.id})">Ver alumnos</button>
           </div>
         </td>
       </tr>
@@ -205,12 +229,9 @@ window.abrirEditarCurso = function (id) {
   cEditId.value = c.id ?? "";
   cEditNombre.value = c.nombre ?? "";
 
-  // asegurar instructores cargados
   fillSelectInstructores(cEditInstructorId, c.instructor_id ?? c.instructorId ?? "");
 
-  // si tu API devuelve fecha_inicio
   cEditFechaInicio.value = (c.fecha_inicio || c.fechaInicio || "").slice(0, 10);
-
   cEditNroClases.value = toNum(c.nro_clases, 1);
   cEditCupo.value = toNum(c.cupo, 1);
 
@@ -238,7 +259,7 @@ formCurso?.addEventListener("submit", async (e) => {
   const payload = {
     nombre: (cursoNombre?.value || "").trim(),
     instructor_id: toNum(cursoInstructorId?.value, 0),
-    fecha_inicio: (cursoFechaInicio?.value || "").trim(),
+    fecha_inicio: (cursoFechaInicio?.value || "").trim() || hoyISO(),
     nro_clases: toNum(cursoNroClases?.value, 0),
     cupo: toNum(cursoCupo?.value, 0),
     dias: (cursoDias?.value || "").trim(),
@@ -248,10 +269,6 @@ formCurso?.addEventListener("submit", async (e) => {
     estado: (cursoEstado?.value || "Programado").trim(),
   };
 
-  // defaults útiles
-  if (!payload.fecha_inicio) payload.fecha_inicio = hoyISO();
-
-  // validación mínima (evita NOT NULL constraint)
   if (!payload.nombre) {
     msgCurso.textContent = "El nombre del curso es obligatorio.";
     msgCurso.className = "text-danger small";
@@ -302,9 +319,7 @@ formCurso?.addEventListener("submit", async (e) => {
     msgCurso.className = "text-success small";
 
     formCurso.reset();
-    // restaurar estado por defecto
     if (cursoEstado) cursoEstado.value = "Programado";
-    // recargar instructores en select (reset borra selección)
     fillSelectInstructores(cursoInstructorId, "");
 
     await cargarCursos();
@@ -394,6 +409,67 @@ formCursoEdit?.addEventListener("submit", async (e) => {
 });
 
 // ===============================
+// Ver alumnos (modal)
+// ===============================
+window.verAlumnosCurso = async function (cursoId) {
+  const c = cursosCache.find((x) => Number(x.id) === Number(cursoId));
+  const cursoNombre = c?.nombre || `Curso #${cursoId}`;
+  const profe = c?.instructor_nombre ? ` | Instructor: ${c.instructor_nombre}` : "";
+
+  try {
+    if (!modalVerAlumnosEl) return;
+
+    if (tituloVerAlumnosEl) tituloVerAlumnosEl.textContent = `Alumnos inscritos — ${cursoNombre}${profe}`;
+    if (msgVerAlumnosEl) {
+      msgVerAlumnosEl.textContent = "Cargando...";
+      msgVerAlumnosEl.className = "text-muted small mb-2";
+    }
+    if (tablaVerAlumnosEl) {
+      tablaVerAlumnosEl.innerHTML = `<tr><td colspan="6" class="text-center text-muted">Cargando...</td></tr>`;
+    }
+
+    const p = new URLSearchParams({ curso_id: String(cursoId), estado: "Activa" });
+    const res = await fetchJSON(`/api/inscripciones?${p.toString()}`);
+    const data = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
+
+    if (!data.length) {
+      tablaVerAlumnosEl.innerHTML = `<tr><td colspan="6" class="text-center text-muted">No hay alumnos inscritos.</td></tr>`;
+      if (msgVerAlumnosEl) msgVerAlumnosEl.textContent = "";
+      new bootstrap.Modal(modalVerAlumnosEl).show();
+      return;
+    }
+
+    if (msgVerAlumnosEl) {
+      msgVerAlumnosEl.textContent = `${data.length} alumno${data.length !== 1 ? "s" : ""} inscrito${data.length !== 1 ? "s" : ""}`;
+      msgVerAlumnosEl.className = "text-muted small mb-2";
+    }
+
+    tablaVerAlumnosEl.innerHTML = data.map((r, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td class="fw-semibold">${esc(r.alumno_nombre || r.nombre || "")}</td>
+        <td>${esc(r.alumno_documento || r.documento || "")}</td>
+        <td>${esc(r.alumno_telefono || r.telefono || "")}</td>
+        <td>${esc(r.alumno_email ?? "")}</td>
+        <td>${badgeEstadoInscripcion(r.estado_inscripcion ?? r.estado ?? "")}</td>
+      </tr>
+    `).join("");
+
+    new bootstrap.Modal(modalVerAlumnosEl).show();
+  } catch (err) {
+    console.error(err);
+    if (msgVerAlumnosEl) {
+      msgVerAlumnosEl.textContent = `Error: ${err.message}`;
+      msgVerAlumnosEl.className = "text-danger small mb-2";
+    }
+    if (tablaVerAlumnosEl) {
+      tablaVerAlumnosEl.innerHTML = `<tr><td colspan="6" class="text-center text-danger">No se pudo cargar.</td></tr>`;
+    }
+    new bootstrap.Modal(modalVerAlumnosEl).show();
+  }
+};
+
+// ===============================
 // Eventos filtros + refrescar
 // ===============================
 btnFiltrarCursos?.addEventListener("click", cargarCursos);
@@ -414,7 +490,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     await cargarInstructores();
   } catch (e) {
     console.error("No se pudo cargar instructores:", e);
-    // igual dejamos que funcione cursos si ya existen
   }
 
   try {

@@ -9,6 +9,45 @@
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 
+
+<div class="modal fade" id="modalVerAlumnos" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="tituloVerAlumnos">Alumnos inscritos</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+
+      <div class="modal-body">
+        <div id="msgVerAlumnos" class="text-muted small mb-2"></div>
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Alumno</th>
+                <th>CI</th>
+                <th>Teléfono</th>
+                <th>Email</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody id="tablaVerAlumnos">
+              <tr><td colspan="6" class="text-center text-muted">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
 <body class="bg-light">
   <div class="d-flex">
 
@@ -193,7 +232,7 @@
                     </div>
 
                     <div class="col-md-3">
-                      <label class="form-label">Duración (int) *</label>
+                      <label class="form-label">Duración (horas) *</label>
                       <input id="cursoDuracion" type="number" class="form-control" min="1" required>
                     </div>
 

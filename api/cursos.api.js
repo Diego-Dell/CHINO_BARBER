@@ -75,11 +75,59 @@ export async function remove(id) {
 }
 
 // 6.1 Ver inscritos del curso
-export async function getInscritos(id, { estado = "Activa" } = {}) {
-  const safeId = assertId(id);
-  const query = qs({ estado });
-  return fetchJSON(`${BASE}/${safeId}/inscritos${query}`, { method: "GET" });
-}
+router.get("/", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    const estado = String(req.query.estado || "").trim();
+
+    const where = [];
+    const params = [];
+
+    if (q) {
+      where.push("(c.nombre LIKE ?)");
+      params.push(`%${q}%`);
+    }
+    if (estado) {
+      where.push("c.estado = ?");
+      params.push(estado);
+    }
+
+    const rows = await dbAll(
+      `
+      SELECT 
+        c.*,
+        COALESCE(i.nombre, '') AS instructor_nombre,
+        (
+          SELECT COUNT(*)
+          FROM inscripciones x
+          WHERE x.curso_id = c.id AND x.estado = 'Activa'
+        ) AS inscritos
+      FROM cursos c
+      LEFT JOIN instructores i ON i.id = c.instructor_id
+      ${where.length ? "WHERE " + where.join(" AND ") : ""}
+      ORDER BY c.id DESC
+      LIMIT 200
+      `,
+      params
+    );
+
+    const out = rows.map((c) => {
+      const { fecha_inicio, hora_inicio, duracion } = parseHorarioPorDia(c.horario_por_dia);
+      return {
+        ...c,
+        fecha_inicio,
+        hora_inicio,
+        duracion: duracion ? toNum(duracion, 0) : 0,
+      };
+    });
+
+    return res.json(out);
+  } catch (err) {
+    console.error("[CURSOS][GET]", err);
+    return res.status(500).json({ ok: false, error: "Error al listar cursos" });
+  }
+});
+
 
 // 6.2 Ver cupo del curso (stats)
 export async function getCupo(id) {

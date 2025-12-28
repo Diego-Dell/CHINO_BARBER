@@ -86,14 +86,18 @@ router.get("/", async (req, res) => {
     const rows = await dbAll(`
       SELECT 
         c.*,
-        i.nombre AS instructor_nombre
+        COALESCE(i.nombre,'') AS instructor_nombre,
+        (
+          SELECT COUNT(*)
+          FROM inscripciones x
+          WHERE x.curso_id = c.id AND x.estado = 'Activa'
+        ) AS inscritos
       FROM cursos c
       LEFT JOIN instructores i ON i.id = c.instructor_id
       ORDER BY c.id DESC
       LIMIT 200
     `);
 
-    // ✅ agregamos campos que tu front usa en horarioTexto()
     const out = rows.map((c) => {
       const { fecha_inicio, hora_inicio, duracion } = parseHorarioPorDia(c.horario_por_dia);
       return {
@@ -110,6 +114,7 @@ router.get("/", async (req, res) => {
     return res.status(500).json({ ok: false, error: "Error al listar cursos" });
   }
 });
+
 
 // ================= GET /api/cursos/:id =================
 router.get("/:id", async (req, res) => {

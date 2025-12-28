@@ -426,13 +426,27 @@ formInscribirG?.addEventListener("submit", async (e) => {
       if (m && window.bootstrap?.Modal) window.bootstrap.Modal.getInstance(m)?.hide();
       if (msgInscribirG) msgInscribirG.textContent = "";
     }, 800);
-  } catch (err) {
-    console.error(err);
-    if (msgInscribirG) {
-      msgInscribirG.textContent = "Error al inscribir (revisa backend inscripciones)";
-      msgInscribirG.className = "text-danger small";
-    }
+} catch (err) {
+  console.error(err);
+
+  const msg = String(err.message || "");
+
+  if (msg.includes("Cupo lleno")) {
+    msgInscribirG.textContent = "Cupo lleno. Ya no hay espacios en este curso.";
+    msgInscribirG.className = "text-warning small";
+    return;
   }
+
+  if (msg.includes("Ya inscrito")) {
+    msgInscribirG.textContent = "Este alumno ya está inscrito en este curso.";
+    msgInscribirG.className = "text-warning small";
+    return;
+  }
+
+  msgInscribirG.textContent = "No se pudo inscribir. Intenta nuevamente.";
+  msgInscribirG.className = "text-danger small";
+}
+
 });
 
 // =====================================
