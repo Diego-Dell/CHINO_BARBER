@@ -9,6 +9,82 @@
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 
+<!-- Modal: Asistencia Visual tipo foto -->
+<div class="modal fade" id="modalAsistenciaFoto" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content asfoto-modal">
+
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title asfoto-title" id="asFotoTitle">ASISTENCIA</h5>
+          <div class="asfoto-sub" id="asFotoSub">—</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+
+      <div class="modal-body">
+        <div class="row g-3">
+          <!-- IZQUIERDA: grilla -->
+          <div class="col-lg-9">
+            <div class="asfoto-wrap">
+              <div class="asfoto-grid" id="asFotoGrid"></div>
+            </div>
+            <div class="small text-muted mt-2">
+              Tip: desliza horizontalmente para ver todas las clases.
+            </div>
+          </div>
+
+          <!-- DERECHA: leyenda -->
+          <div class="col-lg-3">
+            <div class="asfoto-legend">
+              <div class="asfoto-legend-title">Leyenda</div>
+
+              <div class="asfoto-legend-item">
+                <span class="asfoto-dot dot-a"></span>
+                <div>
+                  <div class="asfoto-legend-label">Asistió <span class="asfoto-pill">(A)</span></div>
+                </div>
+              </div>
+
+              <div class="asfoto-legend-item">
+                <span class="asfoto-dot dot-f"></span>
+                <div>
+                  <div class="asfoto-legend-label">Faltó <span class="asfoto-pill">(F)</span></div>
+                </div>
+              </div>
+
+              <div class="asfoto-legend-item mb-0">
+                <span class="asfoto-dot dot-l"></span>
+                <div>
+                  <div class="asfoto-legend-label">Licencia <span class="asfoto-pill">(L)</span></div>
+                </div>
+              </div>
+
+              <hr class="my-3" />
+
+              <button class="btn btn-success w-100" id="btnGuardarAsFoto">
+                ✅ Guardar cambios
+              </button>
+              <div class="small text-muted mt-2" id="asFotoMsg"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
+
+
+
+
+
 <body class="bg-light">
   <div class="d-flex">
 

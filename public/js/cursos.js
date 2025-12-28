@@ -796,3 +796,297 @@ window.verAsistenciaVisual = async function (cursoId, cursoNombre = "") {
     new bootstrap.Modal(modalEl).show();
   }
 };
+
+
+// ========= ASISTENCIA VISUAL TIPO FOTO (modal) =========
+
+// helpers (si ya los tienes en este archivo, NO los dupliques)
+function parseISO(d) {
+  const [y, m, day] = String(d || "").split("-").map(Number);
+  if (!y || !m || !day) return null;
+  return new Date(y, m - 1, day);
+}
+function toISODate(dt) {
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+function toNum(v, def = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : def;
+}
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+// "Martes-Jueves" -> weekdays
+function normDiasToWeekdays(diasStr) {
+  const s = String(diasStr || "").toLowerCase();
+  const map = [
+    ["lunes", 1], ["martes", 2], ["miercoles", 3], ["miércoles", 3],
+    ["jueves", 4], ["viernes", 5], ["sabado", 6], ["sábado", 6], ["domingo", 0],
+  ];
+  const out = new Set();
+  for (const [name, idx] of map) if (s.includes(name)) out.add(idx);
+  return Array.from(out).sort((a,b)=>a-b);
+}
+
+function buildFechasClases({ fecha_inicio, dias, nro_clases }) {
+  const fi = (fecha_inicio || "").slice(0, 10);
+  const start = parseISO(fi);
+  const n = toNum(nro_clases, 0);
+  const weekdays = normDiasToWeekdays(dias);
+
+  if (!start || n <= 0 || weekdays.length === 0) return [];
+
+  const fechas = [];
+  let cursor = new Date(start);
+
+  while (fechas.length < n) {
+    if (weekdays.includes(cursor.getDay())) fechas.push(toISODate(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+    if ((cursor - start) / 86400000 > 900) break;
+  }
+  return fechas;
+}
+
+// Map estado a letra
+function estadoToLetra(estado) {
+  const e = String(estado || "").toLowerCase();
+  if (e.includes("asist")) return "A";
+  if (e.includes("falt")) return "F";
+  if (e.includes("lic") || e.includes("justif")) return "L";
+  return "";
+}
+function letraToEstado(letra) {
+  if (letra === "A") return "Asistió";
+  if (letra === "F") return "Faltó";
+  if (letra === "L") return "Licencia";
+  return "";
+}
+
+// --- API (usa TU fetchJSON ya existente en cursos.js) ---
+// Debes tener: GET /api/inscripciones?curso_id= &estado=Activa  (con alumno_nombre, alumno_documento, inscripcion_id/id)
+// Debes tener: GET /api/asistencia?curso_id= &fecha=YYYY-MM-DD (con inscripcion_id y estado)
+// Para guardar: puedes tener POST /api/asistencia (uno por uno) o bulk. Te dejo saveCells uno por uno.
+
+async function apiGetInscritos(cursoId) {
+  const p = new URLSearchParams({ curso_id: String(cursoId), estado: "Activa" });
+  const res = await fetchJSON(`/api/inscripciones?${p.toString()}`);
+  const arr = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
+  return arr.map(r => ({
+    inscripcion_id: r.inscripcion_id ?? r.id,
+    alumno_nombre: r.alumno_nombre ?? r.nombre ?? "",
+    alumno_documento: r.alumno_documento ?? r.documento ?? "",
+  })).filter(x => x.inscripcion_id);
+}
+
+async function apiGetAsistenciaDia(cursoId, fechaISO) {
+  const p = new URLSearchParams({ curso_id: String(cursoId), fecha: String(fechaISO) });
+  const res = await fetchJSON(`/api/asistencia?${p.toString()}`);
+  const rows = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
+  const m = new Map();
+  for (const r of rows) {
+    const inscId = r.inscripcion_id ?? r.inscripcionId ?? r.id;
+    if (!inscId) continue;
+    m.set(Number(inscId), estadoToLetra(r.estado || ""));
+  }
+  return m;
+}
+
+// Guardar: 1 por celda (seguro, no requiere bulk)
+async function apiUpsertAsistencia({ curso_id, inscripcion_id, fecha, estado }) {
+  // Ajusta si tu backend usa otra ruta/fields
+  return fetchJSON("/api/asistencia", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ curso_id, inscripcion_id, fecha, estado }),
+  });
+}
+
+// ===== estado global del modal =====
+let AS_FOTO = {
+  cursoId: 0,
+  fechas: [],
+  alumnos: [],
+  // Map key "inscId|fecha" -> letra
+  values: new Map(),
+  // dirty changes: Map key -> letra
+  dirty: new Map(),
+  curso: null
+};
+
+function keyCell(inscId, fechaISO) {
+  return `${Number(inscId)}|${fechaISO}`;
+}
+
+function renderAsistenciaFotoModal() {
+  const grid = document.getElementById("asFotoGrid");
+  if (!grid) return;
+
+  const { fechas, alumnos } = AS_FOTO;
+
+  if (!fechas.length) {
+    grid.innerHTML = `<div class="text-muted">No se pudieron calcular fechas (revisa inicio/días/nro_clases).</div>`;
+    return;
+  }
+
+  // Define columnas: 1 col nombres + N fechas
+  // grid-template-columns dinámico:
+  grid.style.gridTemplateColumns = `var(--nameCol) repeat(${fechas.length}, var(--cell))`;
+
+  const parts = [];
+
+  // Header row: (vacío para la col nombre) + fechas
+  parts.push(`<div></div>`);
+  for (const f of fechas) {
+    parts.push(`<div class="asfoto-h">${esc(f.slice(5))}</div>`);
+  }
+
+  // Rows: alumno name + cells
+  for (const a of alumnos) {
+    parts.push(`
+      <div>
+        <div class="asfoto-name">${esc(a.alumno_nombre || "—")}</div>
+        <div class="asfoto-ci">${esc(a.alumno_documento || "")}</div>
+      </div>
+    `);
+
+    for (const f of fechas) {
+      const inscId = a.inscripcion_id;
+      const k = keyCell(inscId, f);
+      const letra = AS_FOTO.values.get(k) || ""; // A/F/L/""
+      parts.push(`
+        <div class="asfoto-cell" data-k="${esc(k)}" data-v="${esc(letra)}">
+          <select class="asfoto-select" data-k="${esc(k)}">
+            <option value="" ${letra==="" ? "selected":""}></option>
+            <option value="A" ${letra==="A" ? "selected":""}>A</option>
+            <option value="F" ${letra==="F" ? "selected":""}>F</option>
+            <option value="L" ${letra==="L" ? "selected":""}>L</option>
+          </select>
+        </div>
+      `);
+    }
+  }
+
+  grid.innerHTML = parts.join("");
+
+  // listeners a selects
+  grid.querySelectorAll(".asfoto-select").forEach(sel => {
+    sel.addEventListener("change", (e) => {
+      const k = e.target.getAttribute("data-k");
+      const v = e.target.value; // A/F/L/""
+      AS_FOTO.dirty.set(k, v);
+      AS_FOTO.values.set(k, v);
+
+      // pinta la celda
+      const cell = grid.querySelector(`.asfoto-cell[data-k="${CSS.escape(k)}"]`);
+      if (cell) cell.setAttribute("data-v", v);
+
+      const msg = document.getElementById("asFotoMsg");
+      if (msg) msg.textContent = `Cambios sin guardar: ${AS_FOTO.dirty.size}`;
+    });
+  });
+}
+
+// ===== abre el modal =====
+window.abrirAsistenciaFoto = async function (cursoId) {
+  const title = document.getElementById("asFotoTitle");
+  const sub = document.getElementById("asFotoSub");
+  const msg = document.getElementById("asFotoMsg");
+  const grid = document.getElementById("asFotoGrid");
+
+  AS_FOTO = { cursoId: Number(cursoId), fechas: [], alumnos: [], values: new Map(), dirty: new Map(), curso: null };
+
+  try {
+    if (msg) msg.textContent = "Cargando…";
+    if (grid) grid.innerHTML = "";
+
+    // trae curso desde cache (si tienes cursosCache global)
+    const curso = (window.cursosCache || []).find(c => Number(c.id) === Number(cursoId)) || null;
+    AS_FOTO.curso = curso;
+
+    const nombreCurso = curso?.nombre || `Curso #${cursoId}`;
+    const instructor = curso?.instructor_nombre || curso?.instructor || "—";
+    const inicio = (curso?.fecha_inicio || "").slice(0,10) || "—";
+    const dias = curso?.dias || "—";
+    const clases = toNum(curso?.nro_clases, 0);
+
+    if (title) title.textContent = `ASISTENCIA — ${nombreCurso}`;
+    if (sub) sub.textContent = `Instructor: ${instructor} · Inicio: ${inicio} · Días: ${dias} · Clases: ${clases}`;
+
+    // fechas del curso
+    const fechas = buildFechasClases({
+      fecha_inicio: curso?.fecha_inicio || curso?.fechaInicio || "",
+      dias: curso?.dias || "",
+      nro_clases: curso?.nro_clases || curso?.nroClases || 0
+    });
+    AS_FOTO.fechas = fechas;
+
+    // alumnos inscritos
+    const alumnos = await apiGetInscritos(cursoId);
+    AS_FOTO.alumnos = alumnos;
+
+    // cargar asistencia de BD por fecha (si hay muchas clases, esto hace varias llamadas)
+    for (const f of fechas) {
+      const mapDia = await apiGetAsistenciaDia(cursoId, f);
+      for (const a of alumnos) {
+        const k = keyCell(a.inscripcion_id, f);
+        const letra = mapDia.get(Number(a.inscripcion_id)) || "";
+        AS_FOTO.values.set(k, letra);
+      }
+    }
+
+    renderAsistenciaFotoModal();
+
+    if (msg) msg.textContent = `Alumnos: ${alumnos.length} · Clases: ${fechas.length}`;
+
+    new bootstrap.Modal(document.getElementById("modalAsistenciaFoto")).show();
+  } catch (e) {
+    console.error(e);
+    if (msg) msg.textContent = "Error cargando asistencia.";
+    if (grid) grid.innerHTML = `<div class="text-danger">Error: ${esc(e.message || "desconocido")}</div>`;
+    new bootstrap.Modal(document.getElementById("modalAsistenciaFoto")).show();
+  }
+};
+
+// ===== guardar cambios =====
+document.getElementById("btnGuardarAsFoto")?.addEventListener("click", async () => {
+  const msg = document.getElementById("asFotoMsg");
+  try {
+    if (!AS_FOTO.cursoId) return;
+
+    if (!AS_FOTO.dirty.size) {
+      if (msg) msg.textContent = "No hay cambios para guardar.";
+      return;
+    }
+
+    if (msg) msg.textContent = "Guardando…";
+
+    // guardar 1 por 1 (seguro)
+    for (const [k, letra] of AS_FOTO.dirty.entries()) {
+      const [inscIdStr, fecha] = k.split("|");
+      const inscId = Number(inscIdStr);
+      const estado = letraToEstado(letra); // "Asistió" / "Faltó" / "Licencia" / ""
+
+      // si queda vacío, puedes decidir: no guardar / o guardar como "Sin registro".
+      // aquí: si vacío, NO guarda.
+      if (!estado) continue;
+
+      await apiUpsertAsistencia({
+        curso_id: AS_FOTO.cursoId,
+        inscripcion_id: inscId,
+        fecha,
+        estado
+      });
+    }
+
+    AS_FOTO.dirty.clear();
+    if (msg) msg.textContent = "✅ Guardado.";
+  } catch (e) {
+    console.error(e);
+    if (msg) msg.textContent = "Error guardando.";
+    alert("Error: " + String(e.message || "desconocido"));
+  }
+});

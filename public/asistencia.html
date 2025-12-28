@@ -2,17 +2,95 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Asistencia — Barber School</title>
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link rel="stylesheet" href="css/styles.css" />
+
+  <!-- Tipografías -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
+
+<!-- Modal: Asistencia Visual tipo foto -->
+<div class="modal fade" id="modalAsistenciaFoto" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content asfoto-modal">
+
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title asfoto-title" id="asFotoTitle">ASISTENCIA</h5>
+          <div class="asfoto-sub" id="asFotoSub">—</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+
+      <div class="modal-body">
+        <div class="row g-3">
+          <!-- IZQUIERDA: grilla -->
+          <div class="col-lg-9">
+            <div class="asfoto-wrap">
+              <div class="asfoto-grid" id="asFotoGrid"></div>
+            </div>
+            <div class="small text-muted mt-2">
+              Tip: desliza horizontalmente para ver todas las clases.
+            </div>
+          </div>
+
+          <!-- DERECHA: leyenda -->
+          <div class="col-lg-3">
+            <div class="asfoto-legend">
+              <div class="asfoto-legend-title">Leyenda</div>
+
+              <div class="asfoto-legend-item">
+                <span class="asfoto-dot dot-a"></span>
+                <div>
+                  <div class="asfoto-legend-label">Asistió <span class="asfoto-pill">(A)</span></div>
+                </div>
+              </div>
+
+              <div class="asfoto-legend-item">
+                <span class="asfoto-dot dot-f"></span>
+                <div>
+                  <div class="asfoto-legend-label">Faltó <span class="asfoto-pill">(F)</span></div>
+                </div>
+              </div>
+
+              <div class="asfoto-legend-item mb-0">
+                <span class="asfoto-dot dot-l"></span>
+                <div>
+                  <div class="asfoto-legend-label">Licencia <span class="asfoto-pill">(L)</span></div>
+                </div>
+              </div>
+
+              <hr class="my-3" />
+
+              <button class="btn btn-success w-100" id="btnGuardarAsFoto">
+                ✅ Guardar cambios
+              </button>
+              <div class="small text-muted mt-2" id="asFotoMsg"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
 
 <body class="bg-light">
 
   <div class="d-flex">
 
+    <!-- Sidebar -->
     <aside id="sidebar" class="sidebar shadow-sm">
       <div class="sidebar-header d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
@@ -22,120 +100,133 @@
             <small class="text-muted d-block">Barber School</small>
           </div>
         </div>
-        <button class="btn btn-sm btn-outline-secondary d-lg-none" onclick="toggleSidebar()">✖</button>
+        <button class="btn btn-sm btn-outline-light d-lg-none" onclick="toggleSidebar()">✖</button>
       </div>
 
       <div class="sidebar-section">
+        <div class="sb-title">GENERAL</div>
         <nav class="nav flex-column sidebar-nav">
-          <a href="index.html" class="nav-link">📊 Dashboard</a>
+          <a href="index.html" class="nav-link">📊 <span>Dashboard</span></a>
         </nav>
       </div>
 
       <div class="sidebar-section mt-3">
+        <div class="sb-title">GESTIÓN ACADÉMICA</div>
         <nav class="nav flex-column sidebar-nav">
-          <a href="alumnos.html" class="nav-link">👥 Alumnos</a>
-          <a href="cursos.html" class="nav-link">📚 Cursos</a>
-          <a href="instructores.html" class="nav-link">🧑‍🏫 Instructores</a>
-          <a href="asistencia.html" class="nav-link active">🗓️ Asistencia</a>
+          <a href="alumnos.html" class="nav-link">👥 <span>Alumnos</span></a>
+          <a href="cursos.html" class="nav-link">📚 <span>Cursos</span></a>
+          <a href="instructores.html" class="nav-link">🧑‍🏫 <span>Instructores</span></a>
+          <a href="asistencia.html" class="nav-link active">🗓️ <span>Asistencia</span></a>
         </nav>
       </div>
 
       <div class="sidebar-section mt-3">
+        <div class="sb-title">FINANZAS</div>
         <nav class="nav flex-column sidebar-nav">
-          <a href="pagos.html" class="nav-link">💵 Pagos</a>
-          <a href="deudores.html" class="nav-link">⚠️ Deudores</a>
+          <a href="pagos.html" class="nav-link">💵 <span>Pagos</span></a>
+          <a href="deudores.html" class="nav-link">⚠️ <span>Deudores</span></a>
         </nav>
       </div>
 
       <div class="sidebar-section mt-3">
+        <div class="sb-title">OPERACIÓN</div>
         <nav class="nav flex-column sidebar-nav">
-          <a href="inventario.html" class="nav-link">📦 Inventario</a>
-          <a href="reportes.html" class="nav-link">📈 Reportes</a>
-          <a href="sistema.html" class="nav-link">⚙️ Sistema</a>
+          <a href="inventario.html" class="nav-link">📦 <span>Inventario</span></a>
+          <a href="reportes.html" class="nav-link">📈 <span>Reportes</span></a>
+          <a href="sistema.html" class="nav-link">⚙️ <span>Sistema</span></a>
         </nav>
       </div>
     </aside>
 
     <div id="overlay" class="overlay d-lg-none" onclick="toggleSidebar()"></div>
 
+    <!-- Main -->
     <main class="main-content flex-grow-1">
 
-      <div class="topbar bg-white shadow-sm">
+      <div class="topbar bg-white shadow-sm d-flex align-items-center justify-content-between px-3 py-2">
         <button class="btn btn-outline-primary d-lg-none" onclick="toggleSidebar()">☰</button>
         <h4 class="mb-0">Asistencia</h4>
       </div>
 
       <div class="container-fluid py-4">
 
-        <div class="d-flex justify-content-between align-items-center mb-3">
-          <div>
-            <h4 class="mb-0">Control de asistencia</h4>
-            <p class="text-secondary small mb-0">Registra la asistencia de los alumnos por curso y fecha.</p>
-          </div>
-
-          <button class="btn btn-outline-primary btn-sm" onclick="cargarAsistenciasHoy()">
-            📅 Cargar hoy
-          </button>
+        <div class="mb-3">
+          <h3 class="page-title mb-1">Control de asistencia (visual)</h3>
+          <div class="subtext small">Vista por curso completo (fechas calculadas por inicio + días + número de clases).</div>
         </div>
 
-        <div class="card shadow-sm mb-3">
+        <!-- filtros -->
+        <div class="card mb-3">
           <div class="card-body">
-            <div class="row g-3">
-
-              <div class="col-md-3">
-                <label class="form-label small text-muted">Fecha</label>
-                <input type="date" id="aFecha" class="form-control form-control-sm">
-              </div>
-
-              <div class="col-md-4">
+            <div class="row g-3 align-items-end">
+              <div class="col-lg-5">
                 <label class="form-label small text-muted">Curso *</label>
                 <select class="form-select form-select-sm" id="aCurso"></select>
               </div>
 
-              <div class="col-md-3">
+              <div class="col-lg-4">
                 <label class="form-label small text-muted">Buscar alumno</label>
                 <input type="text" id="aBuscar" class="form-control form-control-sm" placeholder="Nombre o CI">
               </div>
 
-              <div class="col-md-2 d-grid">
-                <button class="btn btn-outline-primary btn-sm" id="btnCargarAlumnos">
-                  Cargar alumnos
-                </button>
+                    <div class="col-lg-3 text-lg-end d-flex gap-2 justify-content-lg-end">
+                      <button class="btn btn-primary btn-sm" id="btnAgregarAsistencia">
+                        ➕ Agregar asistencia
+                      </button>
+                      <div id="msgAs" class="small text-muted align-self-center"></div>
+                    </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- visual + leyenda -->
+        <div class="row g-3">
+          <div class="col-lg-9">
+            <div class="card">
+              <div class="card-body">
+                <div id="asInfoCurso" class="small text-muted mb-2"></div>
+
+                <div class="asWrap">
+                  <div id="asGrid" class="asGrid"></div>
+                </div>
+
+                <div class="text-muted small mt-2">
+                  Tip: desliza horizontalmente para ver todas las clases.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-lg-3">
+            <div class="legend-box">
+              <div class="legend-title">Leyenda</div>
+
+              <div class="legend-item">
+                <span class="legend-dot dot-present"></span>
+                <span>Asistió</span>
               </div>
 
+              <div class="legend-item">
+                <span class="legend-dot dot-absent"></span>
+                <span>Faltó</span>
+              </div>
+
+              <div class="legend-item mb-0">
+                <span class="legend-dot dot-excused"></span>
+                <span>Licencia</span>
+              </div>
+
+              <hr class="my-3">
+
+              <div class="small text-muted">
+                Carga desde la BD por fecha de clase.
+              </div>
             </div>
           </div>
-        </div>
-
-        <div class="card shadow-sm">
-          <div class="card-body p-0">
-
-            <div class="table-responsive">
-              <table class="table table-hover table-sm mb-0">
-                <thead class="table-light">
-                  <tr>
-                    <th style="width:50px">#</th>
-                    <th>Alumno</th>
-                    <th>CI</th>
-                    <th style="width:160px">Asistencia</th>
-                  </tr>
-                </thead>
-                <tbody id="tablaAsistencia"></tbody>
-              </table>
-            </div>
-
-          </div>
-        </div>
-
-        <div class="mt-3 text-end">
-          <button class="btn btn-success btn-sm" id="btnGuardarAsistencia">
-            ✅ Guardar asistencia
-          </button>
-          <span class="small text-muted ms-2" id="msgAs"></span>
         </div>
 
       </div>
-
     </main>
   </div>
 
@@ -146,10 +237,7 @@
     }
   </script>
 
-  <!-- IMPORTANTE: Bootstrap JS (bundle incluye Popper) -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-
-  <!-- tu lógica -->
   <script src="js/asistencia.js"></script>
 </body>
 </html>
