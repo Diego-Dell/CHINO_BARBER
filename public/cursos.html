@@ -9,48 +9,10 @@
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 
-
-<div class="modal fade" id="modalVerAlumnos" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="tituloVerAlumnos">Alumnos inscritos</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-      </div>
-
-      <div class="modal-body">
-        <div id="msgVerAlumnos" class="text-muted small mb-2"></div>
-
-        <div class="table-responsive">
-          <table class="table table-sm align-middle">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Alumno</th>
-                <th>CI</th>
-                <th>Teléfono</th>
-                <th>Email</th>
-                <th>Estado</th>
-              </tr>
-            </thead>
-            <tbody id="tablaVerAlumnos">
-              <tr><td colspan="6" class="text-center text-muted">—</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="modal-footer">
-        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-
 <body class="bg-light">
   <div class="d-flex">
 
+    <!-- SIDEBAR -->
     <aside id="sidebar" class="sidebar shadow-sm">
       <div class="sidebar-header d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
@@ -96,6 +58,7 @@
 
     <div id="overlay" class="overlay d-lg-none" onclick="toggleSidebar()"></div>
 
+    <!-- MAIN -->
     <main class="main-content flex-grow-1">
       <div class="topbar bg-white shadow-sm">
         <button class="btn btn-outline-primary d-lg-none" onclick="toggleSidebar()">☰</button>
@@ -168,7 +131,7 @@
                   <th class="text-center">Inscritos</th>
                   <th class="text-end">Precio</th>
                   <th>Estado</th>
-                  <th style="width:140px">Acciones</th>
+                  <th style="width:160px">Acciones</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -176,207 +139,341 @@
           </div>
         </div>
 
-        <!-- ========== MODAL: CREAR CURSO ========== -->
-        <div class="modal fade" id="modalCurso" tabindex="-1">
-          <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content">
-
-              <form id="formCurso">
-                <div class="modal-header">
-                  <h5 class="modal-title">Crear curso</h5>
-                  <button class="btn-close" type="button" data-bs-dismiss="modal"></button>
-                </div>
-
-                <div class="modal-body">
-                  <div class="row g-3">
-
-                    <div class="col-md-6">
-                      <label class="form-label">Nombre del curso *</label>
-                      <input id="cursoNombre" class="form-control" required>
-                    </div>
-
-                    <div class="col-md-6">
-                      <label class="form-label">Instructor *</label>
-                      <select id="cursoInstructorId" class="form-select" required>
-                        <option value="">-- Seleccionar instructor --</option>
-                      </select>
-                    </div>
-
-                    <div class="col-12"><hr class="my-2"></div>
-
-                    <div class="col-md-4">
-                      <label class="form-label">Fecha de inicio *</label>
-                      <input type="date" class="form-control" id="cursoFechaInicio" required>
-                    </div>
-
-                    <div class="col-md-4">
-                      <label class="form-label">Número de clases *</label>
-                      <input id="cursoNroClases" type="number" class="form-control" min="1" required>
-                    </div>
-
-                    <div class="col-md-4">
-                      <label class="form-label">Cupo máximo *</label>
-                      <input id="cursoCupo" type="number" class="form-control" min="1" required>
-                    </div>
-
-                    <div class="col-12"><hr class="my-2"></div>
-
-                    <div class="col-md-6">
-                      <label class="form-label">Días *</label>
-                      <input id="cursoDias" class="form-control" placeholder="Ej: Lunes, Miércoles, Viernes" required>
-                    </div>
-
-                    <div class="col-md-3">
-                      <label class="form-label">Hora inicio *</label>
-                      <input id="cursoHoraInicio" type="time" class="form-control" required>
-                    </div>
-
-                    <div class="col-md-3">
-                      <label class="form-label">Duración (horas) *</label>
-                      <input id="cursoDuracion" type="number" class="form-control" min="1" required>
-                    </div>
-
-                    <div class="col-md-4">
-                      <label class="form-label">Precio (Bs)</label>
-                      <input id="cursoPrecio" type="number" class="form-control" min="0" step="0.01">
-                    </div>
-
-                    <div class="col-md-4">
-                      <label class="form-label">Estado</label>
-                      <select id="cursoEstado" class="form-select">
-                        <option value="Programado">Programado</option>
-                        <option value="Activo">Activo</option>
-                        <option value="En curso">En curso</option>
-                        <option value="Finalizado">Finalizado</option>
-                        <option value="Cancelado">Cancelado</option>
-                      </select>
-                    </div>
-
-                  </div>
-
-                  <div class="mt-2">
-                    <small id="msgCurso" class="text-muted"></small>
-                  </div>
-                </div>
-
-                <div class="modal-footer">
-                  <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal" type="button">
-                    Cancelar
-                  </button>
-                  <button class="btn btn-primary btn-sm" type="submit">
-                    Guardar curso
-                  </button>
-                </div>
-
-              </form>
-
-            </div>
-          </div>
-        </div>
-
-        <!-- ========== MODAL: EDITAR CURSO ========== -->
-        <div class="modal fade" id="modalCursoEdit" tabindex="-1">
-          <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content">
-
-              <form id="formCursoEdit">
-                <div class="modal-header">
-                  <h5 class="modal-title">Editar curso</h5>
-                  <button class="btn-close" data-bs-dismiss="modal" type="button"></button>
-                </div>
-
-                <div class="modal-body">
-                  <input type="hidden" id="cEditId">
-
-                  <div class="row g-3">
-
-                    <div class="col-md-6">
-                      <label class="form-label">Nombre *</label>
-                      <input id="cEditNombre" class="form-control" required>
-                    </div>
-
-                    <div class="col-md-6">
-                      <label class="form-label">Instructor *</label>
-                      <select id="cEditInstructorId" class="form-select" required>
-                        <option value="">-- Seleccionar instructor --</option>
-                      </select>
-                    </div>
-
-                    <div class="col-12"><hr class="my-2"></div>
-
-                    <div class="col-md-4">
-                      <label class="form-label">Fecha de inicio *</label>
-                      <input id="cEditFechaInicio" type="date" class="form-control" required>
-                    </div>
-
-                    <div class="col-md-4">
-                      <label class="form-label">Número de clases *</label>
-                      <input id="cEditNroClases" type="number" class="form-control" min="1" required>
-                    </div>
-
-                    <div class="col-md-4">
-                      <label class="form-label">Cupo máximo *</label>
-                      <input id="cEditCupo" type="number" class="form-control" min="1" required>
-                    </div>
-
-                    <div class="col-12"><hr class="my-2"></div>
-
-                    <div class="col-md-6">
-                      <label class="form-label">Días *</label>
-                      <input id="cEditDias" class="form-control" required>
-                    </div>
-
-                    <div class="col-md-3">
-                      <label class="form-label">Hora inicio *</label>
-                      <input id="cEditHoraInicio" type="time" class="form-control" required>
-                    </div>
-
-                    <div class="col-md-3">
-                      <label class="form-label">Duración (int) *</label>
-                      <input id="cEditDuracion" type="number" class="form-control" min="1" required>
-                    </div>
-
-                    <div class="col-md-4">
-                      <label class="form-label">Precio (Bs)</label>
-                      <input id="cEditPrecio" type="number" class="form-control" min="0" step="0.01">
-                    </div>
-
-                    <div class="col-md-4">
-                      <label class="form-label">Estado</label>
-                      <select id="cEditEstado" class="form-select">
-                        <option value="Programado">Programado</option>
-                        <option value="Activo">Activo</option>
-                        <option value="En curso">En curso</option>
-                        <option value="Finalizado">Finalizado</option>
-                        <option value="Cancelado">Cancelado</option>
-                      </select>
-                    </div>
-
-                  </div>
-
-                  <div class="mt-2">
-                    <small id="msgEditCurso" class="text-muted"></small>
-                  </div>
-                </div>
-
-                <div class="modal-footer">
-                  <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal" type="button">
-                    Cancelar
-                  </button>
-                  <button class="btn btn-primary btn-sm" type="submit">
-                    Guardar cambios
-                  </button>
-                </div>
-              </form>
-
-            </div>
-          </div>
-        </div>
-
       </div>
     </main>
   </div>
 
+  <!-- =========================
+       MODALES (DENTRO DEL BODY)
+  ========================== -->
+
+  <!-- Modal: Ver alumnos -->
+  <div class="modal fade" id="modalVerAlumnos" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="tituloVerAlumnos">Alumnos inscritos</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+
+        <div class="modal-body">
+          <div id="msgVerAlumnos" class="text-muted small mb-2"></div>
+
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Alumno</th>
+                  <th>CI</th>
+                  <th>Teléfono</th>
+                  <th>Email</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody id="tablaVerAlumnos">
+                <tr><td colspan="6" class="text-center text-muted">—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Asistencia visual (cuadritos) -->
+<div class="modal fade" id="modalAsistenciaVisual" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="tituloAsVisual">ASISTENCIA</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+        <div class="row g-3">
+          <!-- LADO IZQUIERDO (cuadritos) -->
+          <div class="col-9">
+            <div id="contenedorAsVisual"></div>
+          </div>
+
+          <!-- LADO DERECHO (leyenda) -->
+          <div class="col-3">
+            <div class="p-3" style="border:4px solid #7a001a;border-radius:6px">
+              <div id="leyendaAsVisual"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+  <!-- Modal: Asistencia del curso completo (tabla) -->
+  <div class="modal fade" id="modalAsistenciaCurso" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="titleAsCurso">Asistencia del curso</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+          <div id="infoAsCurso" class="text-muted small mb-2"></div>
+
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle">
+              <thead id="theadAsCurso"></thead>
+              <tbody id="tbodyAsCurso"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+          <button class="btn btn-success" id="btnGuardarAsCurso">Guardar asistencia</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Asistencia visual (cuadritos) -->
+  <div class="modal fade" id="modalAsistenciaVisual" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="tituloAsVisual">ASISTENCIA</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-9">
+              <div id="contenedorAsVisual"></div>
+            </div>
+
+            <div class="col-3">
+              <div class="p-3" style="border:4px solid #7a001a;border-radius:6px">
+                <div id="leyendaAsVisual"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Crear curso -->
+  <div class="modal fade" id="modalCurso" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content">
+
+        <form id="formCurso">
+          <div class="modal-header">
+            <h5 class="modal-title">Crear curso</h5>
+            <button class="btn-close" type="button" data-bs-dismiss="modal"></button>
+          </div>
+
+          <div class="modal-body">
+            <div class="row g-3">
+
+              <div class="col-md-6">
+                <label class="form-label">Nombre del curso *</label>
+                <input id="cursoNombre" class="form-control" required>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">Instructor *</label>
+                <select id="cursoInstructorId" class="form-select" required>
+                  <option value="">-- Seleccionar instructor --</option>
+                </select>
+              </div>
+
+              <div class="col-12"><hr class="my-2"></div>
+
+              <div class="col-md-4">
+                <label class="form-label">Fecha de inicio *</label>
+                <input type="date" class="form-control" id="cursoFechaInicio" required>
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Número de clases *</label>
+                <input id="cursoNroClases" type="number" class="form-control" min="1" required>
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Cupo máximo *</label>
+                <input id="cursoCupo" type="number" class="form-control" min="1" required>
+              </div>
+
+              <div class="col-12"><hr class="my-2"></div>
+
+              <div class="col-md-6">
+                <label class="form-label">Días *</label>
+                <input id="cursoDias" class="form-control" placeholder="Ej: Lunes, Miércoles, Viernes" required>
+              </div>
+
+              <div class="col-md-3">
+                <label class="form-label">Hora inicio *</label>
+                <input id="cursoHoraInicio" type="time" class="form-control" required>
+              </div>
+
+              <div class="col-md-3">
+                <label class="form-label">Duración (horas) *</label>
+                <input id="cursoDuracion" type="number" class="form-control" min="1" required>
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Precio (Bs)</label>
+                <input id="cursoPrecio" type="number" class="form-control" min="0" step="0.01">
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Estado</label>
+                <select id="cursoEstado" class="form-select">
+                  <option value="Programado">Programado</option>
+                  <option value="Activo">Activo</option>
+                  <option value="En curso">En curso</option>
+                  <option value="Finalizado">Finalizado</option>
+                  <option value="Cancelado">Cancelado</option>
+                </select>
+              </div>
+
+            </div>
+
+            <div class="mt-2">
+              <small id="msgCurso" class="text-muted"></small>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal" type="button">
+              Cancelar
+            </button>
+            <button class="btn btn-primary btn-sm" type="submit">
+              Guardar curso
+            </button>
+          </div>
+
+        </form>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Editar curso -->
+  <div class="modal fade" id="modalCursoEdit" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content">
+
+        <form id="formCursoEdit">
+          <div class="modal-header">
+            <h5 class="modal-title">Editar curso</h5>
+            <button class="btn-close" data-bs-dismiss="modal" type="button"></button>
+          </div>
+
+          <div class="modal-body">
+            <input type="hidden" id="cEditId">
+
+            <div class="row g-3">
+
+              <div class="col-md-6">
+                <label class="form-label">Nombre *</label>
+                <input id="cEditNombre" class="form-control" required>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">Instructor *</label>
+                <select id="cEditInstructorId" class="form-select" required>
+                  <option value="">-- Seleccionar instructor --</option>
+                </select>
+              </div>
+
+              <div class="col-12"><hr class="my-2"></div>
+
+              <div class="col-md-4">
+                <label class="form-label">Fecha de inicio *</label>
+                <input id="cEditFechaInicio" type="date" class="form-control" required>
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Número de clases *</label>
+                <input id="cEditNroClases" type="number" class="form-control" min="1" required>
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Cupo máximo *</label>
+                <input id="cEditCupo" type="number" class="form-control" min="1" required>
+              </div>
+
+              <div class="col-12"><hr class="my-2"></div>
+
+              <div class="col-md-6">
+                <label class="form-label">Días *</label>
+                <input id="cEditDias" class="form-control" required>
+              </div>
+
+              <div class="col-md-3">
+                <label class="form-label">Hora inicio *</label>
+                <input id="cEditHoraInicio" type="time" class="form-control" required>
+              </div>
+
+              <div class="col-md-3">
+                <label class="form-label">Duración (int) *</label>
+                <input id="cEditDuracion" type="number" class="form-control" min="1" required>
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Precio (Bs)</label>
+                <input id="cEditPrecio" type="number" class="form-control" min="0" step="0.01">
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Estado</label>
+                <select id="cEditEstado" class="form-select">
+                  <option value="Programado">Programado</option>
+                  <option value="Activo">Activo</option>
+                  <option value="En curso">En curso</option>
+                  <option value="Finalizado">Finalizado</option>
+                  <option value="Cancelado">Cancelado</option>
+                </select>
+              </div>
+
+            </div>
+
+            <div class="mt-2">
+              <small id="msgEditCurso" class="text-muted"></small>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal" type="button">
+              Cancelar
+            </button>
+            <button class="btn btn-primary btn-sm" type="submit">
+              Guardar cambios
+            </button>
+          </div>
+        </form>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- SCRIPTS -->
   <script>
     function toggleSidebar() {
       document.getElementById("sidebar").classList.toggle("open");

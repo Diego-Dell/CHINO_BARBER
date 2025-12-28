@@ -185,12 +185,25 @@ function renderCursos(rows) {
         <td class="text-center">${esc(insText)}</td>
         <td class="text-end">${bs(c.precio)}</td>
         <td><span class="badge ${badgeEstadoCurso(c.estado)}">${esc(c.estado || "Programado")}</span></td>
-        <td>
-          <div class="d-flex gap-2">
-            <button class="btn btn-outline-primary btn-sm" onclick="abrirEditarCurso(${c.id})">Editar</button>
-            <button class="btn btn-outline-secondary btn-sm" onclick="verAlumnosCurso(${c.id})">Ver alumnos</button>
-          </div>
-        </td>
+<td>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-primary btn-sm"
+      onclick="abrirEditarCurso(${c.id})">
+      Editar
+    </button>
+
+    <button class="btn btn-outline-secondary btn-sm"
+      onclick="verAlumnosCurso(${c.id}, '${esc(c.nombre)}')">
+      Ver alumnos
+    </button>
+
+    <button class="btn btn-outline-dark btn-sm"
+      onclick="verAsistenciaVisual(${c.id}, '${esc(c.nombre)}')">
+      Ver asistencia
+    </button>
+  </div>
+</td>
+
       </tr>
     `;
     })
@@ -500,3 +513,286 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (cResumen) cResumen.textContent = "0 cursos";
   }
 });
+
+
+// ===============================
+// ASISTENCIA VISUAL (tipo cuadritos)
+// Requiere modal con:
+// #modalAsistenciaVisual, #tituloAsVisual, #leyendaAsVisual, #contenedorAsVisual
+// ===============================
+
+function colorEstado(estado) {
+  const e = String(estado || "").toLowerCase();
+  if (e === "asistio") return "#21b14b";      // verde
+  if (e === "falto") return "#e9151b";        // rojo
+  if (e === "justificado") return "#00a7e6";  // azul (licencia)
+  return "#e9ecef";                           // gris (sin marcar)
+}
+
+function labelEstadoCorto(estado) {
+  const e = String(estado || "").toLowerCase();
+  if (e === "asistio") return "Asistió";
+  if (e === "falto") return "Faltó";
+  if (e === "justificado") return "Licencia";
+  return "Sin marcar";
+}
+
+function diaCorto(iso) {
+  const d = new Date(iso + "T00:00:00");
+  const dias = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+  return dias[d.getDay()];
+}
+
+function ddmm(iso) {
+  // iso yyyy-mm-dd
+  const [y, m, d] = String(iso).split("-");
+  return `${d}-${m}`;
+}
+
+window.verAsistenciaVisualCurso = async function (cursoId, cursoNombre = "") {
+  const modalEl = document.getElementById("modalAsistenciaVisual");
+  const titulo = document.getElementById("tituloAsVisual");
+  const leyenda = document.getElementById("leyendaAsVisual");
+  const cont = document.getElementById("contenedorAsVisual");
+
+  if (!modalEl || !cont) return alert("Falta el modal visual de asistencia.");
+
+  try {
+    if (titulo) titulo.textContent = "Cargando...";
+    cont.innerHTML = `<div class="text-muted">Cargando...</div>`;
+
+    const res = await fetchJSON(`/api/asistencia/curso/${cursoId}/resumen`);
+    if (!res?.ok) throw new Error(res?.error || "Respuesta inválida");
+
+    const curso = res.curso || {};
+    const fechas = Array.isArray(res.fechas) ? res.fechas : [];
+    const alumnos = Array.isArray(res.alumnos) ? res.alumnos : [];
+
+    const profe = curso.instructor_nombre ? ` | ${curso.instructor_nombre}` : "";
+    if (titulo) titulo.textContent = `ASISTENCIA — ${cursoNombre || curso.nombre || ("Curso #" + cursoId)}${profe}`;
+
+    // Leyenda derecha (como la foto)
+    if (leyenda) {
+      leyenda.innerHTML = `
+        <div class="d-flex flex-column gap-3">
+          <div class="d-flex align-items-center gap-2">
+            <span style="width:26px;height:26px;border-radius:50%;background:#21b14b;border:3px solid #000;display:inline-block"></span>
+            <span class="fw-semibold">Asistió</span>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <span style="width:26px;height:26px;border-radius:50%;background:#e9151b;border:3px solid #000;display:inline-block"></span>
+            <span class="fw-semibold">Faltó</span>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <span style="width:26px;height:26px;border-radius:50%;background:#00a7e6;border:3px solid #000;display:inline-block"></span>
+            <span class="fw-semibold">Licencia</span>
+          </div>
+        </div>
+      `;
+    }
+
+    if (!fechas.length) {
+      cont.innerHTML = `<div class="text-muted">Este curso no tiene fechas/clases generadas.</div>`;
+      new bootstrap.Modal(modalEl).show();
+      return;
+    }
+
+    if (!alumnos.length) {
+      cont.innerHTML = `<div class="text-muted">No hay alumnos inscritos.</div>`;
+      new bootstrap.Modal(modalEl).show();
+      return;
+    }
+
+    // Cabecera de fechas (arriba, centradas)
+    const headerFechas = `
+      <div class="d-flex gap-4 justify-content-center flex-wrap mb-4" style="font-style:italic">
+        ${fechas.map(f => `
+          <div class="text-center" style="min-width:110px">
+            <div class="fw-bold text-decoration-underline">${esc(diaCorto(f))} ${esc(ddmm(f))}</div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+
+    // Filas por alumno: nombre grande a la izquierda, cuadritos en el medio
+    const filas = alumnos.map(a => {
+      const asMap = a.asistencia || {};
+      const cuadritos = fechas.map(f => {
+        const estado = asMap?.[f]?.estado || "";
+        const col = colorEstado(estado);
+        const tip = `${f} — ${labelEstadoCorto(estado)}`;
+        return `
+          <div title="${esc(tip)}"
+               style="width:110px;height:48px;background:${col};border:4px solid #000;border-radius:2px">
+          </div>
+        `;
+      }).join("");
+
+      return `
+        <div class="d-flex align-items-center justify-content-between py-4" style="border-top:1px solid #f1f1f1">
+          <div style="min-width:240px">
+            <div class="display-6 fw-bold text-decoration-underline">${esc(a.alumno_nombre || "")}</div>
+            <div class="text-muted">CI: ${esc(a.alumno_documento || "")}</div>
+          </div>
+
+          <div class="d-flex gap-4 justify-content-center flex-wrap" style="flex:1">
+            ${cuadritos}
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    cont.innerHTML = `
+      <div class="p-3" style="border:6px solid #000;border-radius:6px">
+        <div class="text-center fw-bold mb-2" style="letter-spacing:1px">ASISTENCIA</div>
+        ${headerFechas}
+        ${filas}
+      </div>
+    `;
+
+    new bootstrap.Modal(modalEl).show();
+  } catch (err) {
+    console.error(err);
+    cont.innerHTML = `<div class="text-danger">Error: ${esc(err.message || "desconocido")}</div>`;
+    new bootstrap.Modal(modalEl).show();
+  }
+};
+
+
+window.verAsistenciaVisual = async function (cursoId, cursoNombre = "") {
+  const modalEl = document.getElementById("modalAsistenciaVisual");
+  const titulo = document.getElementById("tituloAsVisual");
+  const cont = document.getElementById("contenedorAsVisual");
+  const leyenda = document.getElementById("leyendaAsVisual");
+
+  if (!modalEl || !titulo || !cont || !leyenda) {
+    alert("Falta el modalAsistenciaVisual en cursos.html");
+    return;
+  }
+
+  titulo.textContent = `ASISTENCIA — ${cursoNombre || ("Curso #" + cursoId)}`;
+
+  // leyenda fija
+  leyenda.innerHTML = `
+    <div class="d-flex align-items-center gap-2 mb-3">
+      <span style="width:22px;height:22px;border-radius:50%;display:inline-block;background:#1fb74a;border:3px solid #111"></span>
+      <b>Asistió</b>
+    </div>
+    <div class="d-flex align-items-center gap-2 mb-3">
+      <span style="width:22px;height:22px;border-radius:50%;display:inline-block;background:#e11d2e;border:3px solid #111"></span>
+      <b>Faltó</b>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <span style="width:22px;height:22px;border-radius:50%;display:inline-block;background:#0ea5e9;border:3px solid #111"></span>
+      <b>Licencia</b>
+    </div>
+  `;
+
+  cont.innerHTML = `<div class="text-muted">Cargando...</div>`;
+
+  try {
+    // 1) alumnos del curso (inscripciones)
+    const p = new URLSearchParams({ curso_id: String(cursoId), estado: "Activa" });
+    let ins = await fetchJSON(`/api/inscripciones?${p.toString()}`);
+    let alumnos = Array.isArray(ins) ? ins : (Array.isArray(ins?.data) ? ins.data : []);
+
+    // fallback
+    if (!alumnos.length) {
+      try {
+        const ins2 = await fetchJSON(`/api/inscripciones/por-curso/${cursoId}`);
+        alumnos = Array.isArray(ins2) ? ins2 : (Array.isArray(ins2?.data) ? ins2.data : []);
+      } catch (_) {}
+    }
+
+    if (!alumnos.length) {
+      cont.innerHTML = `<div class="text-muted">No hay alumnos inscritos.</div>`;
+      new bootstrap.Modal(modalEl).show();
+      return;
+    }
+
+    // 2) Buscar asistencias por cada inscripción
+    // Necesitas endpoint: GET /api/asistencia/por-curso/:cursoId  (si no existe, lo armamos)
+    // Intento 1:
+    let asistRows = [];
+    try {
+      asistRows = await fetchJSON(`/api/asistencia/por-curso/${cursoId}`);
+      asistRows = Array.isArray(asistRows) ? asistRows : (Array.isArray(asistRows?.data) ? asistRows.data : []);
+    } catch (e) {
+      asistRows = [];
+    }
+
+    // Normalizamos: fecha, inscripcion_id, estado
+    // asistRows: [{fecha, inscripcion_id, estado}]
+    const fechas = [...new Set(asistRows.map(x => String(x.fecha || "").slice(0,10)).filter(Boolean))].sort();
+
+    // mapa asistencia[inscripcion_id][fecha] = estado
+    const mapa = new Map();
+    for (const r of asistRows) {
+      const iid = Number(r.inscripcion_id || r.inscripcionId || 0);
+      const f = String(r.fecha || "").slice(0,10);
+      const est = String(r.estado || "").trim();
+      if (!iid || !f) continue;
+      if (!mapa.has(iid)) mapa.set(iid, new Map());
+      mapa.get(iid).set(f, est);
+    }
+
+    // si no hay fechas aún
+    if (!fechas.length) {
+      cont.innerHTML = `<div class="text-muted">Aún no hay asistencia registrada para este curso.</div>`;
+      new bootstrap.Modal(modalEl).show();
+      return;
+    }
+
+    const colorEstado = (e) => {
+      const s = String(e || "").toLowerCase();
+      if (s.includes("asist")) return "#1fb74a";
+      if (s.includes("falt")) return "#e11d2e";
+      if (s.includes("lic")) return "#0ea5e9";
+      return "#e5e7eb"; // sin marcar
+    };
+
+    // Armado visual tipo foto
+    cont.innerHTML = `
+      <div class="p-3" style="border:4px solid #111;border-radius:6px;background:#fff">
+        <div class="fw-bold text-center mb-3" style="font-size:20px;text-transform:uppercase">
+          ASISTENCIA
+        </div>
+
+        <div class="d-flex align-items-center gap-3 mb-2" style="padding-left:240px">
+          ${fechas.map(f => `<div class="text-center" style="width:110px">
+            <div style="font-weight:700;text-decoration:underline">${f.split("-").reverse().join("-")}</div>
+          </div>`).join("")}
+        </div>
+
+        ${alumnos.map(a => {
+          const iid = Number(a.inscripcion_id || a.inscripcionId || a.inscripcionID || a.id || 0);
+          const nombre = a.alumno_nombre || a.nombre || "";
+          return `
+            <div class="d-flex align-items-center gap-3 mb-4">
+              <div style="width:220px">
+                <div style="font-size:42px;font-weight:800;font-style:italic;text-decoration:underline">
+                  ${esc(nombre)}
+                </div>
+              </div>
+
+              <div class="d-flex gap-4">
+                ${fechas.map(f => {
+                  const est = mapa.get(iid)?.get(f) || "";
+                  const col = colorEstado(est);
+                  return `<div style="width:110px;height:46px;border:4px solid #111;background:${col}"></div>`;
+                }).join("")}
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `;
+
+    new bootstrap.Modal(modalEl).show();
+
+  } catch (err) {
+    console.error(err);
+    cont.innerHTML = `<div class="text-danger">No se pudo cargar la asistencia.</div>`;
+    new bootstrap.Modal(modalEl).show();
+  }
+};
