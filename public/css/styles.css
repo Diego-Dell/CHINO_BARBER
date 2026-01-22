@@ -472,6 +472,54 @@ body{
   opacity: .8;
 }
 
+/* ====== SELECT (A/F/L) dentro de cada cuadro ======
+   Se usa en el modal de “Agregar asistencia” (vista tipo foto)
+*/
+.asfoto-select,
+.selAsistenciaLetra{
+  width: 100%;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-family: "Manrope", system-ui, sans-serif;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  appearance: none;
+  -webkit-appearance: none;
+  text-align: center;
+  cursor: pointer;
+}
+
+/* cuadro blanco con borde, como tu referencia */
+.asfoto-cell{
+  background: #ffffff;
+  border: 3px solid rgba(15,23,42,.95);
+  box-shadow: 0 10px 22px rgba(15,23,42,.10);
+}
+
+/* colores por estado (se aplican al contenedor) */
+.asfoto-cell.is-a{ background: #22c55e; }
+.asfoto-cell.is-f{ background: #ef4444; }
+.asfoto-cell.is-l{ background: #06b6d4; }
+.asfoto-cell.is-a .selAsistenciaLetra,
+.asfoto-cell.is-f .selAsistenciaLetra,
+.asfoto-cell.is-l .selAsistenciaLetra{ color:#0b1220; }
+
+/* flechita sutil a la derecha sin arruinar el diseño */
+.asfoto-cell{ position: relative; }
+.asfoto-cell::after{
+  content: "▾";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: .55;
+  font-weight: 900;
+  pointer-events: none;
+}
+
 /* responsive */
 @media (max-width: 576px){
   .asfoto-name{ font-size: 1.5rem; }

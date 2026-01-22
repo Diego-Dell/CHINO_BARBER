@@ -44,7 +44,7 @@ function toISODate(dt) {
   return `${y}-${m}-${d}`;
 }
 
-// Convierte "Martes-Jueves", "Lunes, Miércoles", etc. -> [2,4] (JS: 0 dom..6 sáb)
+// "Martes-Jueves", "Lunes, Miércoles", etc -> [2,4]
 function normDiasToWeekdays(diasStr) {
   const s = String(diasStr || "").toLowerCase();
 
@@ -68,7 +68,7 @@ function normDiasToWeekdays(diasStr) {
 }
 
 function buildFechasClases({ fecha_inicio, dias, nro_clases }) {
-  const fi = (fecha_inicio || "").slice(0, 10);
+  const fi = String(fecha_inicio || "").slice(0, 10);
   const start = parseISO(fi);
   const n = toNum(nro_clases, 0);
   const weekdays = normDiasToWeekdays(dias);
@@ -83,59 +83,107 @@ function buildFechasClases({ fecha_inicio, dias, nro_clases }) {
       fechas.push(toISODate(cursor));
     }
     cursor.setDate(cursor.getDate() + 1);
-    if ((cursor - start) / 86400000 > 900) break; // seguridad
+    if ((cursor - start) / 86400000 > 1200) break;
   }
+
   return fechas;
 }
 
-// BD -> etiqueta visible
-function estadoToLabel(estado) {
-  const e = String(estado || "");
-  // si tu backend guarda "Justificado" lo mostramos como Licencia
-  if (e === "Justificado") return "Licencia";
-  return e;
+// BD -> etiqueta UI
+function estadoFromDBToUI(estado) {
+  const e = String(estado || "").trim().toLowerCase();
+  if (e === "asistio") return "Asistió";
+  if (e === "falto") return "Faltó";
+  if (e === "justificado") return "Licencia";
+  // si BD ya guarda Asistió/Faltó/Licencia:
+  if (e.includes("asist")) return "Asistió";
+  if (e.includes("falt")) return "Faltó";
+  if (e.includes("lic") || e.includes("justif")) return "Licencia";
+  return "";
 }
 
-// etiqueta -> clase (cuadrito)
-function dotClass(estado) {
-  const e = String(estado || "").toLowerCase();
+// UI -> BD
+function estadoUIToDB(estadoUI) {
+  const e = String(estadoUI || "").trim().toLowerCase();
+  if (e === "asistió" || e === "asistio") return "Asistio";
+  if (e === "faltó" || e === "falto") return "Falto";
+  if (e === "licencia") return "Justificado";
+  return "Asistio";
+}
+
+// UI -> class
+function estadoToDotClass(ui) {
+  const e = String(ui || "").toLowerCase();
   if (e.includes("asist")) return "as_ok";
   if (e.includes("falt")) return "as_bad";
-  if (e.includes("lic") || e.includes("just")) return "as_lic";
+  if (e.includes("lic")) return "as_lic";
   return "as_empty";
 }
 
+// ===============================
 // DOM
+// ===============================
 const selCurso = document.getElementById("aCurso");
 const inpBuscar = document.getElementById("aBuscar");
 const msgAs = document.getElementById("msgAs");
+
+// contenedor grilla (tu HTML lo tiene como #asGrid)
+const asGrid = document.getElementById("asGrid");
+
+// info opcional (si existe)
 const asInfoCurso = document.getElementById("asInfoCurso");
 
-let cursosCache = [];
+// botón guardar (si existe en tu leyenda/modal)
+const btnGuardar = document.getElementById("btnGuardarAsVisual") || document.getElementById("btnGuardarAsistencia") || null;
 
+// ===============================
+// Cache
+// ===============================
+let cursosCache = [];
+let fechasCache = [];
+let inscritosCache = [];
+let asistenciasCache = new Map(); // key: fecha -> Map(inscripcion_id -> "Asistió/Faltó/Licencia")
+let cambiosPendientes = new Map(); // key: `${inscId}|${fecha}` -> "Asistió/Faltó/Licencia"
+
+// ===============================
+// API calls
+// ===============================
 async function cargarCursos() {
   const data = await fetchJSON("/api/cursos");
   cursosCache = Array.isArray(data) ? data : [];
 
+  if (!selCurso) return;
+
   selCurso.innerHTML = cursosCache.length
-    ? cursosCache.map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join("")
+    ? cursosCache.map((c) => `<option value="${esc(c.id)}">${esc(c.nombre)}</option>`).join("")
     : `<option value="">(sin cursos)</option>`;
 }
 
 async function getInscritos(cursoId) {
+  // intenta query principal
   const p = new URLSearchParams({ curso_id: String(cursoId), estado: "Activa" });
-  const res = await fetchJSON(`/api/inscripciones?${p.toString()}`);
-  const arr = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
+  let res = await fetchJSON(`/api/inscripciones?${p.toString()}`);
+  let arr = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
 
-  return arr.map(r => ({
-    inscripcion_id: r.inscripcion_id ?? r.id,
-    nombre: r.alumno_nombre ?? r.nombre ?? "",
-    documento: r.alumno_documento ?? r.documento ?? "",
-  })).filter(x => x.inscripcion_id);
+  // fallback por endpoint alterno si existe
+  if (!arr.length) {
+    try {
+      const res2 = await fetchJSON(`/api/inscripciones/por-curso/${cursoId}`);
+      arr = Array.isArray(res2) ? res2 : (Array.isArray(res2?.data) ? res2.data : []);
+    } catch (_) {}
+  }
+
+  return arr
+    .map((r) => ({
+      inscripcion_id: r.inscripcion_id ?? r.inscripcionId ?? r.id,
+      alumno_nombre: r.alumno_nombre ?? r.nombre ?? "",
+      alumno_documento: r.alumno_documento ?? r.documento ?? "",
+    }))
+    .filter((x) => x.inscripcion_id);
 }
 
 async function getAsistenciaDia(cursoId, fechaISO) {
-  const p = new URLSearchParams({ curso_id: String(cursoId), fecha: String(fechaISO) });
+  const p = new URLSearchParams({ curso_id: String(cursoId), fecha: String(fechaISO).slice(0, 10) });
   const res = await fetchJSON(`/api/asistencia?${p.toString()}`);
   const rows = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
 
@@ -143,23 +191,29 @@ async function getAsistenciaDia(cursoId, fechaISO) {
   for (const r of rows) {
     const inscId = r.inscripcion_id ?? r.inscripcionId ?? r.id;
     if (!inscId) continue;
-    m.set(Number(inscId), r.estado ? estadoToLabel(r.estado) : "");
+    const ui = estadoFromDBToUI(r.estado);
+    m.set(Number(inscId), ui);
   }
   return m;
 }
 
-/**
- * Render 100% alineado:
- * UNA SOLA GRILLA (header + body) -> #asGrid
- */
-function renderAsistenciaVisual({ fechas, alumnos }) {
-  const grid = document.getElementById("asGrid");
-  if (!grid) return;
+// ===============================
+// Render grid (1 sola grilla)
+// ===============================
+function renderGrid({ curso, fechas, inscritos, filtro }) {
+  if (!asGrid) return;
 
-  // mostramos fechas como "MM-DD"
-  const fechasUI = fechas.map(f => String(f).slice(5));
+  const q = String(filtro || "").toLowerCase().trim();
 
-  grid.style.setProperty("--ncols", fechasUI.length);
+  const rows = inscritos.filter((a) => {
+    if (!q) return true;
+    return (
+      String(a.alumno_nombre || "").toLowerCase().includes(q) ||
+      String(a.alumno_documento || "").toLowerCase().includes(q)
+    );
+  });
+
+  asGrid.style.setProperty("--ncols", fechas.length);
 
   const cells = [];
 
@@ -167,100 +221,246 @@ function renderAsistenciaVisual({ fechas, alumnos }) {
   cells.push(`<div class="asCell asHead asName">Alumno</div>`);
   cells.push(`<div class="asCell asHead asCI">CI</div>`);
 
-  for (const f of fechasUI) {
-    cells.push(`<div class="asCell asHead"><div class="asDate">${esc(f)}</div></div>`);
+  for (const f of fechas) {
+    cells.push(`<div class="asCell asHead"><div class="asDate">${esc(f.slice(5))}</div></div>`);
   }
 
-  // ROWS
-  for (const a of alumnos) {
-    cells.push(`<div class="asCell asName">${esc(a.nombre || "(sin nombre)")}</div>`);
-    cells.push(`<div class="asCell asCI">${esc(a.documento || "—")}</div>`);
+  // BODY
+  for (const a of rows) {
+    const inscId = Number(a.inscripcion_id);
+    const name = a.alumno_nombre || "(sin nombre)";
+    const ci = a.alumno_documento || "—";
 
-    for (const fISO of fechas) {
-      const estado = a.asistencias?.[fISO] || "";
-      const title = estado ? estado : "Sin registro";
+    cells.push(`<div class="asCell asName">${esc(name)}</div>`);
+    cells.push(`<div class="asCell asCI">${esc(ci)}</div>`);
 
+    for (const f of fechas) {
+      const key = `${inscId}|${f}`;
+      const mapDia = asistenciasCache.get(f);
+      const base = mapDia ? (mapDia.get(inscId) || "") : "";
+      const val = cambiosPendientes.get(key) ?? base;
+      const cls = estadoToDotClass(val);
+      const title = val ? val : "Sin registro";
+
+      // clickable cell
       cells.push(`
         <div class="asCell">
-          <div class="asDot ${dotClass(estado)}" title="${esc(title)}"></div>
+          <button
+            class="asPick"
+            data-insc="${esc(inscId)}"
+            data-fecha="${esc(f)}"
+            title="${esc(title)}"
+            type="button">
+            <span class="asDot ${esc(cls)}"></span>
+          </button>
         </div>
       `);
     }
   }
 
-  grid.innerHTML = cells.join("");
+  if (!rows.length) {
+    // si no hay alumnos filtrados
+    // (pero mantenemos header)
+  }
+
+  asGrid.innerHTML = cells.join("");
+
+  // listeners de cada celda (selector A/F/L)
+  asGrid.querySelectorAll(".asPick").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const inscId = Number(btn.getAttribute("data-insc"));
+      const fecha = btn.getAttribute("data-fecha");
+      abrirSelectorEstado({ inscId, fecha });
+    });
+  });
 }
 
+// ===============================
+// Selector modal/simple (dropdown)
+// ===============================
+function abrirSelectorEstado({ inscId, fecha }) {
+  const key = `${inscId}|${fecha}`;
+
+  const baseMap = asistenciasCache.get(fecha);
+  const base = baseMap ? (baseMap.get(inscId) || "") : "";
+  const actual = cambiosPendientes.get(key) ?? base;
+
+  const opc = window.prompt(
+    `Asistencia ${fecha}
+A = Asistió
+F = Faltó
+L = Licencia
+
+Actual: ${actual || "Sin registro"}
+
+Escribe: A / F / L`,
+    actual
+      ? actual.startsWith("Asist") ? "A"
+        : actual.startsWith("Falt") ? "F"
+        : "L"
+      : ""
+  );
+
+  if (opc === null) return;
+
+  const v = String(opc).trim().toUpperCase();
+  let nuevo = "";
+
+  if (v === "A") nuevo = "Asistió";
+  else if (v === "F") nuevo = "Faltó";
+  else if (v === "L") nuevo = "Licencia";
+  else return;
+
+  // 🔴 ESTA LÍNEA ES LA CLAVE (ANTES FALLABA)
+  cambiosPendientes.set(key, nuevo);
+
+  renderGrid({
+    fechas: fechasCache,
+    inscritos: inscritosCache,
+    filtro: inpBuscar?.value || ""
+  });
+
+  if (msgAs) {
+    msgAs.textContent =
+      `${inscritosCache.length} alumno(s) · ${fechasCache.length} clase(s) · cambios pendientes: ${cambiosPendientes.size}`;
+  }
+}
+
+
+// ===============================
+// Guardar cambios (bulk)
+// ===============================
+async function guardarCambios(cursoId) {
+  if (!cambiosPendientes.size) {
+    alert("No hay cambios para guardar.");
+    return;
+  }
+
+  const items = [];
+  for (const [key, ui] of cambiosPendientes.entries()) {
+    const [inscIdStr, fecha] = key.split("|");
+    const inscId = Number(inscIdStr);
+
+    // si vacío => podrías implementar DELETE, pero por ahora lo guardamos como Asistio? NO.
+    // Mejor: si vacío, lo mandamos como null y el backend lo convierte default,
+    // PERO no conviene. Aquí lo omitimos para no ensuciar.
+    if (!ui) continue;
+
+    items.push({
+      inscripcion_id: inscId,
+      fecha,
+      estado: estadoUIToDB(ui),
+    });
+  }
+
+  if (!items.length) {
+    alert("No hay cambios válidos para guardar.");
+    cambiosPendientes.clear();
+    return;
+  }
+
+  if (msgAs) msgAs.textContent = "Guardando cambios...";
+
+  await fetchJSON("/api/asistencia/bulk", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+
+  cambiosPendientes.clear();
+
+  // recarga BD para asegurarnos que pinta lo guardado
+  await refrescarVisual();
+
+  if (msgAs) msgAs.textContent = `${inscritosCache.length} alumno(s) · ${fechasCache.length} clase(s) · guardado ✅`;
+}
+
+// ===============================
+// Refrescar todo (BD)
+// ===============================
 async function refrescarVisual() {
   const cursoId = Number(selCurso?.value || 0);
-  const curso = cursosCache.find(c => Number(c.id) === cursoId);
+  const curso = cursosCache.find((c) => Number(c.id) === cursoId);
 
   if (!cursoId || !curso) {
     if (msgAs) msgAs.textContent = "Selecciona un curso.";
-    const grid = document.getElementById("asGrid");
-    if (grid) grid.innerHTML = "";
+    if (asGrid) asGrid.innerHTML = "";
     if (asInfoCurso) asInfoCurso.textContent = "";
     return;
   }
 
-  const fechas = buildFechasClases({
-    fecha_inicio: curso.fecha_inicio || curso.fechaInicio || "",
-    dias: curso.dias || "",
-    nro_clases: curso.nro_clases || curso.nroClases || 0
-  });
-
-  const instructor = curso.instructor_nombre || curso.instructor || "";
-  const inicio = (curso.fecha_inicio || curso.fechaInicio || "").slice(0, 10) || "—";
-  const clases = toNum(curso.nro_clases || curso.nroClases, 0);
+  // info curso arriba
+  const instructor = curso.instructor_nombre || curso.instructor || "—";
+  const inicio = String(curso.fecha_inicio || curso.fechaInicio || "").slice(0, 10) || "—";
+  const dias = curso.dias || "—";
+  const clases = toNum(curso.nro_clases || curso.nroClases || 0, 0);
 
   if (asInfoCurso) {
-    asInfoCurso.textContent =
-      `Curso: ${curso.nombre} · Instructor: ${instructor || "—"} · Inicio: ${inicio} · Días: ${curso.dias || "—"} · Clases: ${clases}`;
+    asInfoCurso.textContent = `Curso: ${curso.nombre} · Instructor: ${instructor} · Inicio: ${inicio} · Días: ${dias} · Clases: ${clases}`;
   }
 
-  if (!fechas.length) {
+  fechasCache = buildFechasClases({
+    fecha_inicio: curso.fecha_inicio || curso.fechaInicio || "",
+    dias: curso.dias || "",
+    nro_clases: curso.nro_clases || curso.nroClases || 0,
+  });
+
+  if (!fechasCache.length) {
     if (msgAs) msgAs.textContent = "No se pudieron calcular fechas (revisa inicio/días/nro_clases).";
-    renderAsistenciaVisual({ fechas: [], alumnos: [] });
+    if (asGrid) asGrid.innerHTML = "";
     return;
   }
 
-  if (msgAs) msgAs.textContent = "Cargando desde la BD…";
+  if (msgAs) msgAs.textContent = "Cargando inscritos...";
+  inscritosCache = await getInscritos(cursoId);
 
-  const inscritos = await getInscritos(cursoId);
+  if (msgAs) msgAs.textContent = "Cargando asistencia desde BD...";
+  asistenciasCache = new Map();
 
-  // Map por fecha: fechaISO -> Map(inscId -> estado)
-  const porFecha = new Map();
-  for (const f of fechas) {
-    const mapa = await getAsistenciaDia(cursoId, f);
-    porFecha.set(f, mapa);
+  // cargar cada fecha (simple y seguro)
+  for (const f of fechasCache) {
+    const m = await getAsistenciaDia(cursoId, f);
+    asistenciasCache.set(f, m);
   }
 
-  // build alumnos con asistencias por fecha ISO
-  const q = String(inpBuscar?.value || "").toLowerCase().trim();
+  // render
+  renderGrid({
+    curso,
+    fechas: fechasCache,
+    inscritos: inscritosCache,
+    filtro: inpBuscar?.value || "",
+  });
 
-  const alumnos = inscritos
-    .filter(a => {
-      if (!q) return true;
-      return (
-        String(a.nombre || "").toLowerCase().includes(q) ||
-        String(a.documento || "").toLowerCase().includes(q)
-      );
-    })
-    .map(a => {
-      const inscId = Number(a.inscripcion_id);
-      const asistencias = {};
-      for (const f of fechas) {
-        asistencias[f] = porFecha.get(f)?.get(inscId) || "";
-      }
-      return { nombre: a.nombre, documento: a.documento, asistencias };
-    });
-
-  renderAsistenciaVisual({ fechas, alumnos });
-  if (msgAs) msgAs.textContent = `${inscritos.length} alumno(s) · ${fechas.length} clase(s)`;
+  if (msgAs) msgAs.textContent = `${inscritosCache.length} alumno(s) · ${fechasCache.length} clase(s) · cambios: ${cambiosPendientes.size}`;
 }
 
-selCurso?.addEventListener("change", () => refrescarVisual());
-inpBuscar?.addEventListener("input", () => refrescarVisual());
+// ===============================
+// Eventos
+// ===============================
+selCurso?.addEventListener("change", async () => {
+  cambiosPendientes.clear();
+  await refrescarVisual();
+});
+
+inpBuscar?.addEventListener("input", () => {
+  renderGrid({
+    curso: null,
+    fechas: fechasCache,
+    inscritos: inscritosCache,
+    filtro: inpBuscar?.value || "",
+  });
+});
+
+btnGuardar?.addEventListener("click", async () => {
+  const cursoId = Number(selCurso?.value || 0);
+  if (!cursoId) return alert("Selecciona un curso.");
+  try {
+    await guardarCambios(cursoId);
+  } catch (e) {
+    console.error(e);
+    alert("Error guardando: " + (e.message || "desconocido"));
+  }
+});
 
 document.addEventListener("DOMContentLoaded", async () => {
   try {
@@ -269,392 +469,22 @@ document.addEventListener("DOMContentLoaded", async () => {
   } catch (e) {
     console.error(e);
     if (msgAs) msgAs.textContent = "Error cargando asistencia.";
-    const grid = document.getElementById("asGrid");
-    if (grid) grid.innerHTML = `<div class="text-danger small">Error: ${esc(e.message || "desconocido")}</div>`;
+    if (asGrid) asGrid.innerHTML = `<div class="text-danger small p-3">Error: ${esc(e.message || "desconocido")}</div>`;
   }
-});
 
+  const btnGuardar =
+  document.getElementById("btnGuardarAsVisual") ||
+  document.getElementById("btnGuardarAsistencia");
 
-
-// ===============================
-// BOTÓN: Agregar asistencia (bulk)
-// ===============================
-const btnAgregarAsistencia = document.getElementById("btnAgregarAsistencia");
-
-async function postBulkAsistencia({ cursoId, items }) {
-  // Endpoint sugerido (debes tenerlo en backend)
-  // items: [{ fecha, inscripcion_id, estado }]
-  return fetchJSON("/api/asistencia/bulk", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ curso_id: cursoId, items }),
+if (btnGuardar) {
+  btnGuardar.addEventListener("click", async () => {
+    try {
+      await guardarCambios();
+    } catch (e) {
+      console.error(e);
+      if (msgAs) msgAs.textContent = "Error guardando: " + (e.message || "desconocido");
+    }
   });
 }
 
-btnAgregarAsistencia?.addEventListener("click", async () => {
-  try {
-    const cursoId = Number(selCurso?.value || 0);
-    const curso = cursosCache.find(c => Number(c.id) === cursoId);
-
-    if (!cursoId || !curso) {
-      alert("Selecciona un curso primero.");
-      return;
-    }
-
-    const fechas = buildFechasClases({
-      fecha_inicio: curso.fecha_inicio || curso.fechaInicio || "",
-      dias: curso.dias || "",
-      nro_clases: curso.nro_clases || curso.nroClases || 0
-    });
-
-    if (!fechas.length) {
-      alert("No se pudieron calcular fechas (revisa inicio/días/nro_clases).");
-      return;
-    }
-
-    if (!confirm(`Se agregará asistencia para ${fechas.length} clases. ¿Continuar?`)) return;
-
-    if (msgAs) msgAs.textContent = "Agregando asistencia en BD…";
-
-    // 1) alumnos inscritos
-    const inscritos = await getInscritos(cursoId);
-    if (!inscritos.length) {
-      alert("No hay alumnos inscritos activos.");
-      if (msgAs) msgAs.textContent = "";
-      return;
-    }
-
-    // 2) Consultar qué ya existe, para no duplicar:
-    // armamos un map por fecha (fechaISO -> Map(inscId -> estado))
-    const porFecha = new Map();
-    for (const f of fechas) {
-      const mapa = await getAsistenciaDia(cursoId, f);
-      porFecha.set(f, mapa);
-    }
-
-    // 3) Generar items SOLO donde no existe registro
-    // estado por defecto: "Asistió"
-    const items = [];
-    for (const f of fechas) {
-      const mapa = porFecha.get(f);
-      for (const a of inscritos) {
-        const inscId = Number(a.inscripcion_id);
-        const yaExiste = mapa?.has(inscId);
-        if (!yaExiste) {
-          items.push({ fecha: f, inscripcion_id: inscId, estado: "Asistió" });
-        }
-      }
-    }
-
-    if (!items.length) {
-      if (msgAs) msgAs.textContent = "Ya existe asistencia para todas las clases.";
-      await refrescarVisual();
-      return;
-    }
-
-    // 4) Guardar en lote
-    await postBulkAsistencia({ cursoId, items });
-
-    if (msgAs) msgAs.textContent = `Asistencia agregada: ${items.length} registros.`;
-    await refrescarVisual();
-  } catch (e) {
-    console.error(e);
-    if (msgAs) msgAs.textContent = "Error agregando asistencia.";
-    alert("Error: " + String(e.message || "desconocido"));
-  }
-});
-
-
-
-// ========= ASISTENCIA VISUAL TIPO FOTO (modal) =========
-
-// helpers (si ya los tienes en este archivo, NO los dupliques)
-function parseISO(d) {
-  const [y, m, day] = String(d || "").split("-").map(Number);
-  if (!y || !m || !day) return null;
-  return new Date(y, m - 1, day);
-}
-function toISODate(dt) {
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  const d = String(dt.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-function toNum(v, def = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : def;
-}
-function esc(s) {
-  return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-}
-
-// "Martes-Jueves" -> weekdays
-function normDiasToWeekdays(diasStr) {
-  const s = String(diasStr || "").toLowerCase();
-  const map = [
-    ["lunes", 1], ["martes", 2], ["miercoles", 3], ["miércoles", 3],
-    ["jueves", 4], ["viernes", 5], ["sabado", 6], ["sábado", 6], ["domingo", 0],
-  ];
-  const out = new Set();
-  for (const [name, idx] of map) if (s.includes(name)) out.add(idx);
-  return Array.from(out).sort((a,b)=>a-b);
-}
-
-function buildFechasClases({ fecha_inicio, dias, nro_clases }) {
-  const fi = (fecha_inicio || "").slice(0, 10);
-  const start = parseISO(fi);
-  const n = toNum(nro_clases, 0);
-  const weekdays = normDiasToWeekdays(dias);
-
-  if (!start || n <= 0 || weekdays.length === 0) return [];
-
-  const fechas = [];
-  let cursor = new Date(start);
-
-  while (fechas.length < n) {
-    if (weekdays.includes(cursor.getDay())) fechas.push(toISODate(cursor));
-    cursor.setDate(cursor.getDate() + 1);
-    if ((cursor - start) / 86400000 > 900) break;
-  }
-  return fechas;
-}
-
-// Map estado a letra
-function estadoToLetra(estado) {
-  const e = String(estado || "").toLowerCase();
-  if (e.includes("asist")) return "A";
-  if (e.includes("falt")) return "F";
-  if (e.includes("lic") || e.includes("justif")) return "L";
-  return "";
-}
-function letraToEstado(letra) {
-  if (letra === "A") return "Asistió";
-  if (letra === "F") return "Faltó";
-  if (letra === "L") return "Licencia";
-  return "";
-}
-
-// --- API (usa TU fetchJSON ya existente en cursos.js) ---
-// Debes tener: GET /api/inscripciones?curso_id= &estado=Activa  (con alumno_nombre, alumno_documento, inscripcion_id/id)
-// Debes tener: GET /api/asistencia?curso_id= &fecha=YYYY-MM-DD (con inscripcion_id y estado)
-// Para guardar: puedes tener POST /api/asistencia (uno por uno) o bulk. Te dejo saveCells uno por uno.
-
-async function apiGetInscritos(cursoId) {
-  const p = new URLSearchParams({ curso_id: String(cursoId), estado: "Activa" });
-  const res = await fetchJSON(`/api/inscripciones?${p.toString()}`);
-  const arr = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
-  return arr.map(r => ({
-    inscripcion_id: r.inscripcion_id ?? r.id,
-    alumno_nombre: r.alumno_nombre ?? r.nombre ?? "",
-    alumno_documento: r.alumno_documento ?? r.documento ?? "",
-  })).filter(x => x.inscripcion_id);
-}
-
-async function apiGetAsistenciaDia(cursoId, fechaISO) {
-  const p = new URLSearchParams({ curso_id: String(cursoId), fecha: String(fechaISO) });
-  const res = await fetchJSON(`/api/asistencia?${p.toString()}`);
-  const rows = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
-  const m = new Map();
-  for (const r of rows) {
-    const inscId = r.inscripcion_id ?? r.inscripcionId ?? r.id;
-    if (!inscId) continue;
-    m.set(Number(inscId), estadoToLetra(r.estado || ""));
-  }
-  return m;
-}
-
-// Guardar: 1 por celda (seguro, no requiere bulk)
-async function apiUpsertAsistencia({ curso_id, inscripcion_id, fecha, estado }) {
-  // Ajusta si tu backend usa otra ruta/fields
-  return fetchJSON("/api/asistencia", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ curso_id, inscripcion_id, fecha, estado }),
-  });
-}
-
-// ===== estado global del modal =====
-let AS_FOTO = {
-  cursoId: 0,
-  fechas: [],
-  alumnos: [],
-  // Map key "inscId|fecha" -> letra
-  values: new Map(),
-  // dirty changes: Map key -> letra
-  dirty: new Map(),
-  curso: null
-};
-
-function keyCell(inscId, fechaISO) {
-  return `${Number(inscId)}|${fechaISO}`;
-}
-
-function renderAsistenciaFotoModal() {
-  const grid = document.getElementById("asFotoGrid");
-  if (!grid) return;
-
-  const { fechas, alumnos } = AS_FOTO;
-
-  if (!fechas.length) {
-    grid.innerHTML = `<div class="text-muted">No se pudieron calcular fechas (revisa inicio/días/nro_clases).</div>`;
-    return;
-  }
-
-  // Define columnas: 1 col nombres + N fechas
-  // grid-template-columns dinámico:
-  grid.style.gridTemplateColumns = `var(--nameCol) repeat(${fechas.length}, var(--cell))`;
-
-  const parts = [];
-
-  // Header row: (vacío para la col nombre) + fechas
-  parts.push(`<div></div>`);
-  for (const f of fechas) {
-    parts.push(`<div class="asfoto-h">${esc(f.slice(5))}</div>`);
-  }
-
-  // Rows: alumno name + cells
-  for (const a of alumnos) {
-    parts.push(`
-      <div>
-        <div class="asfoto-name">${esc(a.alumno_nombre || "—")}</div>
-        <div class="asfoto-ci">${esc(a.alumno_documento || "")}</div>
-      </div>
-    `);
-
-    for (const f of fechas) {
-      const inscId = a.inscripcion_id;
-      const k = keyCell(inscId, f);
-      const letra = AS_FOTO.values.get(k) || ""; // A/F/L/""
-      parts.push(`
-        <div class="asfoto-cell" data-k="${esc(k)}" data-v="${esc(letra)}">
-          <select class="asfoto-select" data-k="${esc(k)}">
-            <option value="" ${letra==="" ? "selected":""}></option>
-            <option value="A" ${letra==="A" ? "selected":""}>A</option>
-            <option value="F" ${letra==="F" ? "selected":""}>F</option>
-            <option value="L" ${letra==="L" ? "selected":""}>L</option>
-          </select>
-        </div>
-      `);
-    }
-  }
-
-  grid.innerHTML = parts.join("");
-
-  // listeners a selects
-  grid.querySelectorAll(".asfoto-select").forEach(sel => {
-    sel.addEventListener("change", (e) => {
-      const k = e.target.getAttribute("data-k");
-      const v = e.target.value; // A/F/L/""
-      AS_FOTO.dirty.set(k, v);
-      AS_FOTO.values.set(k, v);
-
-      // pinta la celda
-      const cell = grid.querySelector(`.asfoto-cell[data-k="${CSS.escape(k)}"]`);
-      if (cell) cell.setAttribute("data-v", v);
-
-      const msg = document.getElementById("asFotoMsg");
-      if (msg) msg.textContent = `Cambios sin guardar: ${AS_FOTO.dirty.size}`;
-    });
-  });
-}
-
-// ===== abre el modal =====
-window.abrirAsistenciaFoto = async function (cursoId) {
-  const title = document.getElementById("asFotoTitle");
-  const sub = document.getElementById("asFotoSub");
-  const msg = document.getElementById("asFotoMsg");
-  const grid = document.getElementById("asFotoGrid");
-
-  AS_FOTO = { cursoId: Number(cursoId), fechas: [], alumnos: [], values: new Map(), dirty: new Map(), curso: null };
-
-  try {
-    if (msg) msg.textContent = "Cargando…";
-    if (grid) grid.innerHTML = "";
-
-    // trae curso desde cache (si tienes cursosCache global)
-    const curso = (window.cursosCache || []).find(c => Number(c.id) === Number(cursoId)) || null;
-    AS_FOTO.curso = curso;
-
-    const nombreCurso = curso?.nombre || `Curso #${cursoId}`;
-    const instructor = curso?.instructor_nombre || curso?.instructor || "—";
-    const inicio = (curso?.fecha_inicio || "").slice(0,10) || "—";
-    const dias = curso?.dias || "—";
-    const clases = toNum(curso?.nro_clases, 0);
-
-    if (title) title.textContent = `ASISTENCIA — ${nombreCurso}`;
-    if (sub) sub.textContent = `Instructor: ${instructor} · Inicio: ${inicio} · Días: ${dias} · Clases: ${clases}`;
-
-    // fechas del curso
-    const fechas = buildFechasClases({
-      fecha_inicio: curso?.fecha_inicio || curso?.fechaInicio || "",
-      dias: curso?.dias || "",
-      nro_clases: curso?.nro_clases || curso?.nroClases || 0
-    });
-    AS_FOTO.fechas = fechas;
-
-    // alumnos inscritos
-    const alumnos = await apiGetInscritos(cursoId);
-    AS_FOTO.alumnos = alumnos;
-
-    // cargar asistencia de BD por fecha (si hay muchas clases, esto hace varias llamadas)
-    for (const f of fechas) {
-      const mapDia = await apiGetAsistenciaDia(cursoId, f);
-      for (const a of alumnos) {
-        const k = keyCell(a.inscripcion_id, f);
-        const letra = mapDia.get(Number(a.inscripcion_id)) || "";
-        AS_FOTO.values.set(k, letra);
-      }
-    }
-
-    renderAsistenciaFotoModal();
-
-    if (msg) msg.textContent = `Alumnos: ${alumnos.length} · Clases: ${fechas.length}`;
-
-    new bootstrap.Modal(document.getElementById("modalAsistenciaFoto")).show();
-  } catch (e) {
-    console.error(e);
-    if (msg) msg.textContent = "Error cargando asistencia.";
-    if (grid) grid.innerHTML = `<div class="text-danger">Error: ${esc(e.message || "desconocido")}</div>`;
-    new bootstrap.Modal(document.getElementById("modalAsistenciaFoto")).show();
-  }
-};
-
-// ===== guardar cambios =====
-document.getElementById("btnGuardarAsFoto")?.addEventListener("click", async () => {
-  const msg = document.getElementById("asFotoMsg");
-  try {
-    if (!AS_FOTO.cursoId) return;
-
-    if (!AS_FOTO.dirty.size) {
-      if (msg) msg.textContent = "No hay cambios para guardar.";
-      return;
-    }
-
-    if (msg) msg.textContent = "Guardando…";
-
-    // guardar 1 por 1 (seguro)
-    for (const [k, letra] of AS_FOTO.dirty.entries()) {
-      const [inscIdStr, fecha] = k.split("|");
-      const inscId = Number(inscIdStr);
-      const estado = letraToEstado(letra); // "Asistió" / "Faltó" / "Licencia" / ""
-
-      // si queda vacío, puedes decidir: no guardar / o guardar como "Sin registro".
-      // aquí: si vacío, NO guarda.
-      if (!estado) continue;
-
-      await apiUpsertAsistencia({
-        curso_id: AS_FOTO.cursoId,
-        inscripcion_id: inscId,
-        fecha,
-        estado
-      });
-    }
-
-    AS_FOTO.dirty.clear();
-    if (msg) msg.textContent = "✅ Guardado.";
-  } catch (e) {
-    console.error(e);
-    if (msg) msg.textContent = "Error guardando.";
-    alert("Error: " + String(e.message || "desconocido"));
-  }
 });
