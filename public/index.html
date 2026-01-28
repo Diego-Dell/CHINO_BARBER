@@ -20,7 +20,22 @@
     <aside id="sidebar" class="sidebar shadow-sm">
       <div class="sidebar-header d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
-          <img src="assets/img/FONDO CLARO.png" alt="Logo" class="brand-logo">
+
+          <!-- ✅ ÚNICO CAMBIO: LOGO MÁS GRANDE + SIN CUADRO -->
+          <img
+            src="assets/img/FONDO CLARO.png"
+            alt="Logo"
+            class="brand-logo"
+            style="
+              width:120px;
+              height:120px;
+              padding:0;
+              background:transparent;
+              border-radius:0;
+              object-fit:contain;
+            "
+          >
+
           <div class="lh-1">
             <span class="fw-semibold brand-name">Develop by Diego Dell</span>
             <small class="text-muted d-block">Barber School</small>
@@ -64,7 +79,6 @@
         <nav class="nav flex-column sidebar-nav">
           <a href="inventario.html" class="nav-link">📦 Inventario</a>
           <a href="reportes.html" class="nav-link">📈 Reportes</a>
-          <a href="sistema.html" class="nav-link">⚙️ Sistema</a>
         </nav>
       </div>
     </aside>
@@ -74,19 +88,12 @@
 
     <!-- =================== CONTENIDO PRINCIPAL =================== -->
     <main class="main-content flex-grow-1">
-      
-      <!-- TOPBAR -->
-      <div class="topbar bg-white shadow-sm">
-        <button class="btn btn-outline-primary d-lg-none" onclick="toggleSidebar()">☰</button>
-        <h4 class="mb-0">Dashboard general</h4>
-      </div>
-
       <!-- =================== CONTENIDO =================== -->
       <div class="container-fluid py-4">
 
         <!-- KPIs + Accesos rápidos -->
         <div class="row g-3 align-items-stretch mb-4">
-          
+
           <!-- KPIs -->
           <div class="col-xl-9">
             <div class="row g-3">
@@ -159,19 +166,18 @@
           </div>
         </section>
 
-        <!-- Módulos -->
+        <!-- ✅ Módulos (NO SE TOCA) -->
         <section>
           <h6 class="text-uppercase text-muted small mb-2">Módulos del sistema</h6>
 
           <div class="row g-3">
 
-            <!-- tarjetas -->
             <div class="col-md-3">
               <div class="card card-module h-100 shadow-sm">
                 <div class="card-body d-flex flex-column">
                   <h5 class="card-title">👥 Alumnos</h5>
                   <p class="small text-secondary flex-grow-1">Gestión completa de estudiantes.</p>
-                  <button class="btn btn-outline-primary btn-sm" onclick="location.href='alumnos.html'">Abrir módulo</button>
+                  <button class="btn btn-outline-primary btn-sm" onclick="location.href='alumnos.html'">Abrir</button>
                 </div>
               </div>
             </div>
@@ -181,7 +187,7 @@
                 <div class="card-body d-flex flex-column">
                   <h5 class="card-title">💵 Pagos</h5>
                   <p class="small text-secondary flex-grow-1">Liquidaciones y mensualidades.</p>
-                  <button class="btn btn-outline-primary btn-sm" onclick="location.href='pagos.html'">Abrir módulo</button>
+                  <button class="btn btn-outline-primary btn-sm" onclick="location.href='pagos.html'">Abrir</button>
                 </div>
               </div>
             </div>
@@ -191,7 +197,7 @@
                 <div class="card-body d-flex flex-column">
                   <h5 class="card-title">📦 Inventario</h5>
                   <p class="small text-secondary flex-grow-1">Productos y stock básico.</p>
-                  <button class="btn btn-outline-primary btn-sm" onclick="location.href='inventario.html'">Abrir módulo</button>
+                  <button class="btn btn-outline-primary btn-sm" onclick="location.href='inventario.html'">Abrir</button>
                 </div>
               </div>
             </div>

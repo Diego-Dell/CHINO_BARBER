@@ -41,19 +41,45 @@ function labelEstado(estado) {
   return "—";
 }
 
+function estadoToUI(estado) {
+  if (estado === "Asistio") return { cls: "as_ok", letter: "A" };
+  if (estado === "Falto") return { cls: "as_bad", letter: "F" };
+  if (estado === "Justificado") return { cls: "as_lic", letter: "L" };
+  return { cls: "as_empty", letter: "" };
+}
+
+function estadoToUI(estado) {
+  if (estado === "Asistio") return { cls: "as_ok", letter: "A" };
+  if (estado === "Falto") return { cls: "as_bad", letter: "F" };
+  if (estado === "Justificado") return { cls: "as_lic", letter: "L" };
+  return { cls: "as_empty", letter: "" };
+}
+
 function selectEstadoHTML(inscripcion_id, fecha, actual) {
   const v = String(actual || "");
+  const ui = estadoToUI(v);
+
   return `
-    <select class="form-select form-select-sm celda-asistencia"
-            data-inscripcion-id="${inscripcion_id}"
-            data-fecha="${fecha}">
-      <option value="" ${!v ? "selected" : ""}>—</option>
-      <option value="Asistio" ${v === "Asistio" ? "selected" : ""}>Asistió</option>
-      <option value="Falto" ${v === "Falto" ? "selected" : ""}>Faltó</option>
-      <option value="Justificado" ${v === "Justificado" ? "selected" : ""}>Licencia</option>
-    </select>
+    <div class="asDot ${ui.cls}" style="margin:0 auto;">
+      <span class="asBadge">${ui.letter || ""}</span>
+
+      <select
+        class="celda-asistencia"
+        data-inscripcion-id="${inscripcion_id}"
+        data-fecha="${fecha}"
+        aria-label="Asistencia"
+        style="position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer;"
+      >
+        <option value="" ${!v ? "selected" : ""}>—</option>
+        <option value="Asistio" ${v === "Asistio" ? "selected" : ""}>Asistió</option>
+        <option value="Falto" ${v === "Falto" ? "selected" : ""}>Faltó</option>
+        <option value="Justificado" ${v === "Justificado" ? "selected" : ""}>Licencia</option>
+      </select>
+    </div>
   `;
 }
+
+
 
 // DOM esperados (modal)
 const modalAsCurso = document.getElementById("modalAsistenciaCurso");
@@ -61,7 +87,33 @@ const titleAsCurso = document.getElementById("titleAsCurso");
 const infoAsCurso = document.getElementById("infoAsCurso");
 const theadAsCurso = document.getElementById("theadAsCurso");
 const tbodyAsCurso = document.getElementById("tbodyAsCurso");
+// Actualiza UI (color + badge) cuando cambias el select
+tbodyAsCurso.querySelectorAll(".celda-asistencia").forEach(sel => {
+  sel.addEventListener("change", () => {
+    const wrap = sel.closest(".asDot");
+    if (!wrap) return;
+
+    const badge = wrap.querySelector(".asBadge");
+    if (!badge) return;
+
+    wrap.classList.remove("as_ok", "as_bad", "as_lic", "as_empty");
+
+    const ui = estadoToUI(sel.value);
+    wrap.classList.add(ui.cls);
+    badge.textContent = ui.letter; // <-- LA LETRA VISIBLE
+  });
+});
+
+
 const btnGuardarAsCurso = document.getElementById("btnGuardarAsCurso");
+
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"]/g, c => ({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;"
+  }[c]));
+}
+
 
 let ctxCurso = { curso_id: null, fechas: [] };
 

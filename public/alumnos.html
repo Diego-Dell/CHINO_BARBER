@@ -14,7 +14,19 @@
     <aside id="sidebar" class="sidebar shadow-sm">
       <div class="sidebar-header d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
-          <img src="assets/img/FONDO CLARO.png" class="brand-logo" alt="Logo">
+          <img
+            src="assets/img/FONDO CLARO.png"
+            class="brand-logo"
+            alt="Logo"
+            style="
+              width:120px;
+              height:120px;
+              padding:0;
+              background:transparent;
+              border-radius:0;
+              object-fit:contain;
+            "
+          >
           <div class="lh-1">
             <span class="fw-semibold brand-name">Develop by Diego Dell</span>
             <small class="text-muted d-block">Barber Chino</small>
@@ -23,13 +35,17 @@
         <button class="btn btn-sm btn-outline-secondary d-lg-none" onclick="toggleSidebar()">✖</button>
       </div>
 
+      <!-- ===== GENERAL ===== -->
       <div class="sidebar-section">
+        <p class="sidebar-title">General</p>
         <nav class="nav flex-column sidebar-nav">
           <a href="index.html" class="nav-link">📊 Dashboard</a>
         </nav>
       </div>
 
+      <!-- ===== GESTIÓN ACADÉMICA ===== -->
       <div class="sidebar-section mt-3">
+        <p class="sidebar-title">Gestión académica</p>
         <nav class="nav flex-column sidebar-nav">
           <a href="alumnos.html" class="nav-link active">👥 Alumnos</a>
           <a href="cursos.html" class="nav-link">📚 Cursos</a>
@@ -38,18 +54,21 @@
         </nav>
       </div>
 
+      <!-- ===== FINANZAS ===== -->
       <div class="sidebar-section mt-3">
+        <p class="sidebar-title">Finanzas</p>
         <nav class="nav flex-column sidebar-nav">
           <a href="pagos.html" class="nav-link">💵 Pagos</a>
           <a href="deudores.html" class="nav-link">⚠️ Deudores</a>
         </nav>
       </div>
 
+      <!-- ===== OPERACIÓN ===== -->
       <div class="sidebar-section mt-3">
+        <p class="sidebar-title">Operación</p>
         <nav class="nav flex-column sidebar-nav">
           <a href="inventario.html" class="nav-link">📦 Inventario</a>
           <a href="reportes.html" class="nav-link">📈 Reportes</a>
-          <a href="sistema.html" class="nav-link">⚙️ Sistema</a>
         </nav>
       </div>
     </aside>
@@ -57,12 +76,6 @@
     <div id="overlay" class="overlay d-lg-none" onclick="toggleSidebar()"></div>
 
     <main class="main-content flex-grow-1">
-
-      <div class="topbar bg-white shadow-sm">
-        <button class="btn btn-outline-primary d-lg-none" onclick="toggleSidebar()">☰</button>
-        <h4 class="mb-0">Alumnos</h4>
-      </div>
-
       <div class="container-fluid py-4">
 
         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -195,153 +208,149 @@
           </div>
         </div>
 
-<!-- ===========================
-     MODAL: INSCRIBIR (GLOBAL) por CI
-=========================== -->
-<div class="modal fade" id="modalInscribirGlobal" tabindex="-1">
-  <div class="modal-dialog modal-lg modal-dialog-centered">
-    <div class="modal-content">
+        <!-- ===========================
+             MODAL: INSCRIBIR (GLOBAL) por CI
+        ============================ -->
+        <div class="modal fade" id="modalInscribirGlobal" tabindex="-1">
+          <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
 
-      <form id="formInscribirGlobal">
-        <div class="modal-header">
-          <h5 class="modal-title">Inscribir alumno a un curso</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
+              <form id="formInscribirGlobal">
+                <div class="modal-header">
+                  <h5 class="modal-title">Inscribir alumno a un curso</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
 
-        <div class="modal-body">
+                <div class="modal-body">
 
-          <!-- Buscar alumno por CI -->
-          <div class="row g-2 align-items-end">
-            <div class="col-md-6">
-              <label class="form-label">Carnet / CI del alumno *</label>
-              <input id="inscGDocumento" class="form-control" placeholder="Ej: 8949402" required>
+                  <div class="row g-2 align-items-end">
+                    <div class="col-md-6">
+                      <label class="form-label">Carnet / CI del alumno *</label>
+                      <input id="inscGDocumento" class="form-control" placeholder="Ej: 8949402" required>
+                    </div>
+
+                    <div class="col-md-3 d-grid">
+                      <button type="button" id="btnBuscarAlumnoCI" class="btn btn-outline-primary">
+                        🔎 Buscar
+                      </button>
+                    </div>
+
+                    <div class="col-md-3">
+                      <label class="form-label">Estado</label>
+                      <select id="inscGEstado" class="form-select">
+                        <option value="Activa">Activa</option>
+                        <option value="Inactiva">Inactiva</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div class="mt-3 p-2 border rounded bg-light">
+                    <input type="hidden" id="inscGAlumnoId">
+                    <div class="fw-semibold" id="inscGAlumnoNombre">Alumno: —</div>
+                    <small class="text-muted" id="inscGAlumnoInfo">CI: —</small>
+                  </div>
+
+                  <hr class="my-3">
+
+                  <div class="row g-3">
+                    <div class="col-md-12">
+                      <label class="form-label">Curso disponible *</label>
+                      <select id="inscGCursoId" class="form-select" required>
+                        <option value="">Cargando cursos...</option>
+                      </select>
+                      <small class="text-muted">Solo se listan cursos disponibles (Programado / En curso).</small>
+                    </div>
+                  </div>
+
+                  <div class="mt-3">
+                    <small id="msgInscribirGlobal" class="text-muted"></small>
+                  </div>
+
+                </div>
+
+                <div class="modal-footer">
+                  <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+                    Cancelar
+                  </button>
+                  <button type="submit" class="btn btn-primary">
+                    Guardar inscripción
+                  </button>
+                </div>
+
+              </form>
+
             </div>
-
-            <div class="col-md-3 d-grid">
-              <button type="button" id="btnBuscarAlumnoCI" class="btn btn-outline-primary">
-                🔎 Buscar
-              </button>
-            </div>
-
-            <div class="col-md-3">
-              <label class="form-label">Estado</label>
-              <select id="inscGEstado" class="form-select">
-                <option value="Activa">Activa</option>
-                <option value="Inactiva">Inactiva</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Info alumno encontrado -->
-          <div class="mt-3 p-2 border rounded bg-light">
-            <input type="hidden" id="inscGAlumnoId">
-            <div class="fw-semibold" id="inscGAlumnoNombre">Alumno: —</div>
-            <small class="text-muted" id="inscGAlumnoInfo">CI: —</small>
-          </div>
-
-          <hr class="my-3">
-
-          <!-- Cursos disponibles -->
-          <div class="row g-3">
-            <div class="col-md-12">
-              <label class="form-label">Curso disponible *</label>
-              <select id="inscGCursoId" class="form-select" required>
-                <option value="">Cargando cursos...</option>
-              </select>
-              <small class="text-muted">Solo se listan cursos disponibles (Programado / En curso).</small>
-            </div>
-          </div>
-
-          <div class="mt-3">
-            <small id="msgInscribirGlobal" class="text-muted"></small>
-          </div>
-
-        </div>
-
-        <div class="modal-footer">
-          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
-            Cancelar
-          </button>
-          <button type="submit" class="btn btn-primary">
-            Guardar inscripción
-          </button>
-        </div>
-
-      </form>
-
-    </div>
-  </div>
-</div>
-
-<!-- ========== MODAL: EDITAR ALUMNO ========== -->
-<div class="modal fade" id="modalAlumnoEdit" tabindex="-1">
-  <div class="modal-dialog modal-lg modal-dialog-centered">
-    <div class="modal-content">
-
-      <form id="formAlumnoEdit">
-        <div class="modal-header">
-          <h5 class="modal-title">Editar alumno</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-
-        <div class="modal-body">
-          <input type="hidden" id="editId">
-
-          <div class="row g-3">
-            <div class="col-md-6">
-              <label class="form-label">Nombre completo *</label>
-              <input type="text" class="form-control" id="editNombre" required>
-            </div>
-
-            <div class="col-md-6">
-              <label class="form-label">Documento / CI *</label>
-              <input type="text" class="form-control" id="editDocumento" required>
-            </div>
-
-            <div class="col-md-4">
-              <label class="form-label">Teléfono</label>
-              <input type="text" class="form-control" id="editTelefono">
-            </div>
-
-            <div class="col-md-5">
-              <label class="form-label">Email</label>
-              <input type="email" class="form-control" id="editEmail">
-            </div>
-
-            <div class="col-md-3">
-              <label class="form-label">Fecha ingreso</label>
-              <input type="date" class="form-control" id="editFecha">
-            </div>
-
-            <div class="col-md-4">
-              <label class="form-label">Estado</label>
-              <select class="form-select" id="editEstado">
-                <option value="Activo">Activo</option>
-                <option value="Inactivo">Inactivo</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="mt-3">
-            <small id="msgEditAlumno" class="text-muted small"></small>
           </div>
         </div>
 
-        <div class="modal-footer">
-          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
-            Cancelar
-          </button>
-          <button type="submit" class="btn btn-primary">
-            Guardar cambios
-          </button>
+        <!-- ========== MODAL: EDITAR ALUMNO ========== -->
+        <div class="modal fade" id="modalAlumnoEdit" tabindex="-1">
+          <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+
+              <form id="formAlumnoEdit">
+                <div class="modal-header">
+                  <h5 class="modal-title">Editar alumno</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+
+                <div class="modal-body">
+                  <input type="hidden" id="editId">
+
+                  <div class="row g-3">
+                    <div class="col-md-6">
+                      <label class="form-label">Nombre completo *</label>
+                      <input type="text" class="form-control" id="editNombre" required>
+                    </div>
+
+                    <div class="col-md-6">
+                      <label class="form-label">Documento / CI *</label>
+                      <input type="text" class="form-control" id="editDocumento" required>
+                    </div>
+
+                    <div class="col-md-4">
+                      <label class="form-label">Teléfono</label>
+                      <input type="text" class="form-control" id="editTelefono">
+                    </div>
+
+                    <div class="col-md-5">
+                      <label class="form-label">Email</label>
+                      <input type="email" class="form-control" id="editEmail">
+                    </div>
+
+                    <div class="col-md-3">
+                      <label class="form-label">Fecha ingreso</label>
+                      <input type="date" class="form-control" id="editFecha">
+                    </div>
+
+                    <div class="col-md-4">
+                      <label class="form-label">Estado</label>
+                      <select class="form-select" id="editEstado">
+                        <option value="Activo">Activo</option>
+                        <option value="Inactivo">Inactivo</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div class="mt-3">
+                    <small id="msgEditAlumno" class="text-muted small"></small>
+                  </div>
+                </div>
+
+                <div class="modal-footer">
+                  <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+                    Cancelar
+                  </button>
+                  <button type="submit" class="btn btn-primary">
+                    Guardar cambios
+                  </button>
+                </div>
+
+              </form>
+
+            </div>
+          </div>
         </div>
-
-      </form>
-
-    </div>
-  </div>
-</div>
-
 
         <!-- ===========================
              MODAL: HISTORIAL CURSOS

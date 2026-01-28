@@ -14,145 +14,155 @@
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
 
-<!-- Modal: Asistencia Visual tipo foto -->
-<div class="modal fade" id="modalAsistenciaFoto" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable">
-    <div class="modal-content asfoto-modal">
+<body class="bg-light">
 
-      <div class="modal-header">
-        <div>
-          <h5 class="modal-title asfoto-title" id="asFotoTitle">ASISTENCIA</h5>
-          <div class="asfoto-sub" id="asFotoSub">—</div>
+  <!-- Modal: Asistencia Visual tipo foto -->
+  <div class="modal fade" id="modalAsistenciaFoto" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content asfoto-modal">
+
+        <div class="modal-header">
+          <div>
+            <h5 class="modal-title asfoto-title" id="asFotoTitle">ASISTENCIA</h5>
+            <div class="asfoto-sub" id="asFotoSub">—</div>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-      </div>
 
-      <div class="modal-body">
-        <div class="row g-3">
-          <!-- IZQUIERDA: grilla -->
-          <div class="col-lg-9">
-            <div class="asfoto-wrap">
-              <div class="asfoto-grid" id="asFotoGrid"></div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <!-- IZQUIERDA: grilla -->
+            <div class="col-lg-9">
+              <div class="asfoto-wrap">
+                <div class="asfoto-grid" id="asFotoGrid"></div>
+              </div>
+              <div class="small text-muted mt-2">
+                Tip: desliza horizontalmente para ver todas las clases.
+              </div>
             </div>
-            <div class="small text-muted mt-2">
-              Tip: desliza horizontalmente para ver todas las clases.
+
+            <!-- DERECHA: leyenda -->
+            <div class="col-lg-3">
+              <div class="asfoto-legend">
+                <div class="asfoto-legend-title">Leyenda</div>
+
+                <div class="asfoto-legend-item">
+                  <span class="asfoto-dot dot-a"></span>
+                  <div>
+                    <div class="asfoto-legend-label">Asistió <span class="asfoto-pill">(A)</span></div>
+                  </div>
+                </div>
+
+                <div class="asfoto-legend-item">
+                  <span class="asfoto-dot dot-f"></span>
+                  <div>
+                    <div class="asfoto-legend-label">Faltó <span class="asfoto-pill">(F)</span></div>
+                  </div>
+                </div>
+
+                <div class="asfoto-legend-item mb-0">
+                  <span class="asfoto-dot dot-l"></span>
+                  <div>
+                    <div class="asfoto-legend-label">Licencia <span class="asfoto-pill">(L)</span></div>
+                  </div>
+                </div>
+
+                <hr class="my-3" />
+
+                <button class="btn btn-success w-100" id="btnGuardarAsFoto">
+                  ✅ Guardar cambios
+                </button>
+                <div class="small text-muted mt-2" id="asFotoMsg"></div>
+              </div>
             </div>
           </div>
-
-          <!-- DERECHA: leyenda -->
-          <div class="col-lg-3">
-            <div class="asfoto-legend">
-              <div class="asfoto-legend-title">Leyenda</div>
-
-              <div class="asfoto-legend-item">
-                <span class="asfoto-dot dot-a"></span>
-                <div>
-                  <div class="asfoto-legend-label">Asistió <span class="asfoto-pill">(A)</span></div>
-                </div>
-              </div>
-
-              <div class="asfoto-legend-item">
-                <span class="asfoto-dot dot-f"></span>
-                <div>
-                  <div class="asfoto-legend-label">Faltó <span class="asfoto-pill">(F)</span></div>
-                </div>
-              </div>
-
-              <div class="asfoto-legend-item mb-0">
-                <span class="asfoto-dot dot-l"></span>
-                <div>
-                  <div class="asfoto-legend-label">Licencia <span class="asfoto-pill">(L)</span></div>
-                </div>
-              </div>
-
-              <hr class="my-3" />
-
-              <button class="btn btn-success w-100" id="btnGuardarAsFoto">
-                ✅ Guardar cambios
-              </button>
-              <div class="small text-muted mt-2" id="asFotoMsg"></div>
-            </div>
-          </div>
         </div>
-      </div>
 
-      <div class="modal-footer">
-        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
-      </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+        </div>
 
+      </div>
     </div>
   </div>
-</div>
-
-
-
-<body class="bg-light">
 
   <div class="d-flex">
 
-    <!-- Sidebar -->
+    <!-- SIDEBAR -->
     <aside id="sidebar" class="sidebar shadow-sm">
       <div class="sidebar-header d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
-          <img src="assets/img/FONDO CLARO.png" class="brand-logo" alt="Logo">
+          <img
+            src="assets/img/FONDO CLARO.png"
+            class="brand-logo"
+            alt="Logo"
+            style="
+              width:120px;
+              height:120px;
+              padding:0;
+              background:transparent;
+              border-radius:0;
+              object-fit:contain;
+            "
+          >
           <div class="lh-1">
             <span class="fw-semibold brand-name">Develop by Diego Dell</span>
             <small class="text-muted d-block">Barber School</small>
           </div>
         </div>
-        <button class="btn btn-sm btn-outline-light d-lg-none" onclick="toggleSidebar()">✖</button>
+
+        <button class="btn btn-sm btn-outline-secondary d-lg-none" onclick="toggleSidebar()">✖</button>
       </div>
 
+      <!-- ===== GENERAL ===== -->
       <div class="sidebar-section">
-        <div class="sb-title">GENERAL</div>
+        <p class="sidebar-title">General</p>
         <nav class="nav flex-column sidebar-nav">
-          <a href="index.html" class="nav-link">📊 <span>Dashboard</span></a>
+          <a href="index.html" class="nav-link">📊 Dashboard</a>
         </nav>
       </div>
 
+      <!-- ===== GESTIÓN ACADÉMICA ===== -->
       <div class="sidebar-section mt-3">
-        <div class="sb-title">GESTIÓN ACADÉMICA</div>
+        <p class="sidebar-title">Gestión académica</p>
         <nav class="nav flex-column sidebar-nav">
-          <a href="alumnos.html" class="nav-link">👥 <span>Alumnos</span></a>
-          <a href="cursos.html" class="nav-link">📚 <span>Cursos</span></a>
-          <a href="instructores.html" class="nav-link">🧑‍🏫 <span>Instructores</span></a>
-          <a href="asistencia.html" class="nav-link active">🗓️ <span>Asistencia</span></a>
+          <a href="alumnos.html" class="nav-link">👥 Alumnos</a>
+          <a href="cursos.html" class="nav-link">📚 Cursos</a>
+          <a href="instructores.html" class="nav-link">🧑‍🏫 Instructores</a>
+          <a href="asistencia.html" class="nav-link active">🗓️ Asistencia</a>
         </nav>
       </div>
 
+      <!-- ===== FINANZAS ===== -->
       <div class="sidebar-section mt-3">
-        <div class="sb-title">FINANZAS</div>
+        <p class="sidebar-title">Finanzas</p>
         <nav class="nav flex-column sidebar-nav">
-          <a href="pagos.html" class="nav-link">💵 <span>Pagos</span></a>
-          <a href="deudores.html" class="nav-link">⚠️ <span>Deudores</span></a>
+          <a href="pagos.html" class="nav-link">💵 Pagos</a>
+          <a href="deudores.html" class="nav-link">⚠️ Deudores</a>
         </nav>
       </div>
 
+      <!-- ===== OPERACIÓN ===== -->
       <div class="sidebar-section mt-3">
-        <div class="sb-title">OPERACIÓN</div>
+        <p class="sidebar-title">Operación</p>
         <nav class="nav flex-column sidebar-nav">
-          <a href="inventario.html" class="nav-link">📦 <span>Inventario</span></a>
-          <a href="reportes.html" class="nav-link">📈 <span>Reportes</span></a>
-          <a href="sistema.html" class="nav-link">⚙️ <span>Sistema</span></a>
+          <a href="inventario.html" class="nav-link">📦 Inventario</a>
+          <a href="reportes.html" class="nav-link">📈 Reportes</a>
         </nav>
       </div>
     </aside>
 
     <div id="overlay" class="overlay d-lg-none" onclick="toggleSidebar()"></div>
 
-    <!-- Main -->
+    <!-- MAIN -->
     <main class="main-content flex-grow-1">
 
-      <div class="topbar bg-white shadow-sm d-flex align-items-center justify-content-between px-3 py-2">
-        <button class="btn btn-outline-primary d-lg-none" onclick="toggleSidebar()">☰</button>
-        <h4 class="mb-0">Asistencia</h4>
-      </div>
+
 
       <div class="container-fluid py-4">
 
         <div class="mb-3">
-          <h3 class="page-title mb-1">Control de asistencia (visual)</h3>
-          <div class="subtext small">Vista por curso completo (fechas calculadas por inicio + días + número de clases).</div>
+          <h3 class="page-title mb-1">Control de asistencia</h3>
         </div>
 
         <!-- filtros -->
@@ -169,72 +179,113 @@
                 <input type="text" id="aBuscar" class="form-control form-control-sm" placeholder="Nombre o CI">
               </div>
 
-                    <div class="col-lg-3 text-lg-end d-flex gap-2 justify-content-lg-end">
-                      <button class="btn btn-primary btn-sm" id="btnAgregarAsistencia">
-                        ➕ Agregar asistencia
-                      </button>
-                      <div id="msgAs" class="small text-muted align-self-center"></div>
-                    </div>
-                    <div class="d-flex gap-2 justify-content-end align-items-center">
-  <button class="btn btn-primary" id="btnAgregarAsistencia" type="button">
-    ➕ Agregar asistencia
-  </button>
-
-  <button class="btn btn-success" id="btnGuardarAsVisual" type="button">
-    ✅ Guardar cambios
-  </button>
-</div>
-
-
+              <div class="col-lg-3 d-grid">
+                <button class="btn btn-success" id="btnGuardarAsVisual" type="button">
+                  ✅ Guardar cambios
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- visual + leyenda -->
-        <div class="row g-3">
-          <div class="col-lg-9">
-            <div class="card">
-              <div class="card-body">
-                <div id="asInfoCurso" class="small text-muted mb-2"></div>
+<!-- visual + leyenda (MEJORADO) -->
+<div class="row g-3">
 
-                <div class="asWrap">
-                  <div id="asGrid" class="asGrid"></div>
-                </div>
+  <!-- IZQUIERDA: ASISTENCIA -->
+  <div class="col-lg-9">
+    <div class="card">
+      <div class="card-body">
 
-                <div class="text-muted small mt-2">
-                  Tip: desliza horizontalmente para ver todas las clases.
-                </div>
-              </div>
-            </div>
+        <!-- Header del módulo: info + acciones -->
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+          <div>
+            <div class="fw-bold">Asistencia del curso</div>
+            <div id="asInfoCurso" class="small text-muted">Selecciona un curso para ver la asistencia.</div>
           </div>
 
-          <div class="col-lg-3">
-            <div class="legend-box">
-              <div class="legend-title">Leyenda</div>
+      
+        </div>
 
-              <div class="legend-item">
-                <span class="legend-dot dot-present"></span>
-                <span>Asistió</span>
-              </div>
+        <!-- Mini ayudas / estado -->
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+          <div class="small text-muted">
+            Tip: haz scroll horizontal para ver todas las clases.
+          </div>
 
-              <div class="legend-item">
-                <span class="legend-dot dot-absent"></span>
-                <span>Faltó</span>
-              </div>
-
-              <div class="legend-item mb-0">
-                <span class="legend-dot dot-excused"></span>
-                <span>Licencia</span>
-              </div>
-
-              <hr class="my-3">
-
-              <div class="small text-muted">
-                Carga desde la BD por fecha de clase.
-              </div>
-            </div>
+          <div class="small">
+            <span class="badge text-bg-light border" id="asContadorAlumnos">👥 0 alumnos</span>
+            <span class="badge text-bg-light border" id="asContadorClases">🗓️ 0 clases</span>
           </div>
         </div>
+
+        <!-- Grid -->
+        <div class="asWrap">
+          <div id="asGrid" class="asGrid"></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- DERECHA: LEYENDA + AYUDA -->
+  <div class="col-lg-3">
+    <div class="legend-box">
+
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <div class="legend-title mb-0">Leyenda</div>
+        <span class="badge text-bg-light border">A / F / L</span>
+      </div>
+
+      <!-- Chips grandes (más intuitivo) -->
+      <div class="d-grid gap-2">
+
+        <div class="d-flex align-items-center justify-content-between p-2 rounded-3 border"
+             style="background: rgba(34,197,94,.10);">
+          <div class="d-flex align-items-center gap-2">
+            <span class="legend-dot dot-present"></span>
+            <div class="lh-1">
+              <div class="fw-bold">Asistió</div>
+              <div class="small text-muted">Marca “A”</div>
+            </div>
+          </div>
+          <span class="badge text-bg-success">A</span>
+        </div>
+
+        <div class="d-flex align-items-center justify-content-between p-2 rounded-3 border"
+             style="background: rgba(239,68,68,.10);">
+          <div class="d-flex align-items-center gap-2">
+            <span class="legend-dot dot-absent"></span>
+            <div class="lh-1">
+              <div class="fw-bold">Faltó</div>
+              <div class="small text-muted">Marca “F”</div>
+            </div>
+          </div>
+          <span class="badge text-bg-danger">F</span>
+        </div>
+
+        <div class="d-flex align-items-center justify-content-between p-2 rounded-3 border"
+             style="background: rgba(14,165,233,.10);">
+          <div class="d-flex align-items-center gap-2">
+            <span class="legend-dot dot-excused"></span>
+            <div class="lh-1">
+              <div class="fw-bold">Licencia</div>
+              <div class="small text-muted">Marca “L”</div>
+            </div>
+          </div>
+          <span class="badge text-bg-info">L</span>
+        </div>
+
+      </div>
+
+      <hr class="my-3">
+
+
+    </div>
+  </div>
+
+</div>
+
 
       </div>
     </main>

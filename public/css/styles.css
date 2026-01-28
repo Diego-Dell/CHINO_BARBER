@@ -525,3 +525,187 @@ body{
   .asfoto-name{ font-size: 1.5rem; }
   .asfoto-grid{ --nameCol: 200px; --cell: 96px; }
 }
+
+/* =========================
+   ASISTENCIA: ESTILO TIPO FOTO (como tu ejemplo)
+   - Fondo suave por estado
+   - Badge circular con letra (A/F/L)
+   - Todo centrado y limpio
+========================= */
+
+/* casilla base */
+.asDot{
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border: 1px solid rgba(15,23,42,.10);
+  box-shadow: 0 6px 14px rgba(15,23,42,.10);
+  background: rgba(148,163,184,.18);
+
+  /* ocultamos cualquier “barra” interna si existía */
+  overflow: hidden;
+  position: relative;
+
+  /* por si tu JS mete texto dentro, lo ocultamos
+     (usaremos badge con ::after) */
+  color: transparent;
+  font-size: 0;
+}
+
+/* badge circular */
+.asDot::after{
+  content: attr(data-letter);
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+
+  display: grid;
+  place-items: center;
+
+  font-family: "Manrope", system-ui, sans-serif;
+  font-weight: 900;
+  font-size: 0.85rem;
+  line-height: 1;
+  color: #fff;
+
+  box-shadow: 0 8px 18px rgba(15,23,42,.18);
+}
+
+/* ===== fondos suaves + colores del badge ===== */
+.as_ok{
+  background: rgba(34,197,94,.16);
+}
+.as_ok::after{
+  background: #16a34a;
+}
+
+.as_bad{
+  background: rgba(239,68,68,.16);
+}
+.as_bad::after{
+  background: #dc2626;
+}
+
+.as_lic{
+  background: rgba(14,165,233,.16);
+}
+.as_lic::after{
+  background: #0284c7;
+}
+
+/* vacío */
+.as_empty{
+  background: rgba(148,163,184,.18);
+}
+.as_empty::after{
+  content: "";
+  background: rgba(100,116,139,.28);
+  box-shadow: none;
+}
+
+/* hover sutil */
+.asDot:hover{
+  transform: translateY(-1px);
+  transition: .12s ease;
+}
+
+
+/* ===== BADGE LETRA (BLANCA Y PROTAGONISTA) ===== */
+.asDot::after{
+  content: attr(data-letter);
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  font-family: "Manrope", system-ui, sans-serif;
+  font-weight: 900;
+  font-size: 0.85rem;
+  line-height: 1;
+
+  /* 🔥 CLAVE */
+  color: #ffffff;
+
+  box-shadow: 0 6px 14px rgba(15,23,42,.25);
+}
+
+
+.as_ok::after{
+  background: #16a34a; /* verde */
+}
+
+.as_bad::after{
+  background: #dc2626; /* rojo */
+}
+
+.as_lic::after{
+  background: #0284c7; /* celeste */
+}
+
+.as_empty::after{
+  background: #94a3b8;
+  color: transparent;
+  box-shadow: none;
+}
+
+
+/* ====== CELDA TIPO FOTO: fondo suave + badge letra (como tu ejemplo) ====== */
+.asDot{
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  border: 1px solid rgba(15,23,42,.10);
+  box-shadow: 0 6px 14px rgba(15,23,42,.10);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  position: relative;
+  overflow: hidden;
+
+  /* por si había estilos viejos que metían “puntito” */
+  background-image: none !important;
+}
+
+/* fondos suaves */
+.as_ok{  background: rgba(34,197,94,.16) !important; }
+.as_bad{ background: rgba(239,68,68,.16) !important; }
+.as_lic{ background: rgba(14,165,233,.16) !important; }
+.as_empty{ background: rgba(148,163,184,.18) !important; }
+
+/* badge circular con letra blanca */
+.asBadge{
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+  font-family: "Manrope", system-ui, sans-serif;
+  font-weight: 900;
+  font-size: .85rem;
+  line-height: 1;
+  color: #fff;
+
+  box-shadow: 0 6px 14px rgba(15,23,42,.22);
+}
+
+/* color del badge */
+.as_ok .asBadge{ background: #16a34a; }
+.as_bad .asBadge{ background: #dc2626; }
+.as_lic .asBadge{ background: #0284c7; }
+
+/* vacío: sin letra */
+.as_empty .asBadge{
+  background: rgba(100,116,139,.28);
+  color: transparent;
+  box-shadow: none;
+}

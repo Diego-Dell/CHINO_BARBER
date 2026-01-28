@@ -277,3 +277,4 @@ CREATE INDEX IF NOT EXISTS ix_turnos_instructor ON agenda_turnos(instructor_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_inscripcion_fecha
 ON asistencia(inscripcion_id, fecha);
 
+ALTER TABLE cursos ADD COLUMN pago_frecuencia TEXT DEFAULT 'Mensual';
