@@ -1,28 +1,15 @@
-
 // src/routes/inventario.routes.js
 const express = require("express");
-const db = require("../db"); // sqlite3.Database()
+const db = require("../db");
 const router = express.Router();
 
-// ===============================
-// Middlewares (locales)
-// Si ya los exportas desde auth.routes.js, puedes usar:
-// const { authRequired, adminOnly } = require("./auth.routes"); // ajusta ruta según tu estructura
-// ===============================
-function authRequired(req, res, next) {
-  return next();
-}
+// ===== Middlewares (placeholder) =====
+function authRequired(req, res, next) { return next(); }
+function adminOnly(req, res, next) { return next(); }
 
-function adminOnly(req, res, next) {
-  return next();
-}
-
-// Todas las rutas requieren sesión
 router.use(authRequired);
 
-// ===============================
-// Helpers SQLite promisificados
-// ===============================
+// ===== Helpers SQLite promisificados =====
 function dbRun(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
@@ -31,7 +18,6 @@ function dbRun(sql, params = []) {
     });
   });
 }
-
 function dbGet(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.get(sql, params, (err, row) => {
@@ -40,7 +26,6 @@ function dbGet(sql, params = []) {
     });
   });
 }
-
 function dbAll(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => {
@@ -50,70 +35,59 @@ function dbAll(sql, params = []) {
   });
 }
 
-// ===============================
-// Utilidades / validaciones
-// ===============================
+// ===== Utilidades =====
 const ITEM_ESTADOS = new Set(["Activo", "Inactivo"]);
-const MOV_TIPOS = new Set(["Entrada", "Salida", "Ajuste"]);
+// ✅ Acepta "Ingreso" (DB) y también "Entrada" (compatibilidad)
+const MOV_TIPOS = new Set(["Ingreso", "Entrada", "Salida", "Ajuste"]);
 
 function normStr(v) {
   if (v === undefined || v === null) return null;
   const s = String(v).trim();
   return s.length ? s : null;
 }
-
 function toInt(v, def = null) {
   if (v === undefined || v === null || v === "") return def;
   const n = Number(v);
   return Number.isFinite(n) ? Math.trunc(n) : def;
 }
-
 function toNum(v, def = null) {
   if (v === undefined || v === null || v === "") return def;
   const n = Number(v);
   return Number.isFinite(n) ? n : def;
 }
-
-function pad2(n) {
-  return String(n).padStart(2, "0");
-}
-
+function pad2(n) { return String(n).padStart(2, "0"); }
 function todayISO() {
   const d = new Date();
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
-
 function isISODate(s) {
   if (typeof s !== "string") return false;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-  const [y, m, d] = s.split("-").map((x) => Number(x));
   const dt = new Date(`${s}T00:00:00Z`);
+  const [y, m, d] = s.split("-").map(Number);
   return (
-    Number.isFinite(y) &&
-    Number.isFinite(m) &&
-    Number.isFinite(d) &&
     dt.getUTCFullYear() === y &&
     dt.getUTCMonth() + 1 === m &&
     dt.getUTCDate() === d
   );
 }
+function likeWrap(s) { return `%${String(s || "").trim()}%`; }
 
-function likeWrap(s) {
-  return `%${String(s || "").trim()}%`;
+// ✅ Normaliza tipo: Entrada -> Ingreso
+function normalizeTipo(tipo) {
+  if (tipo === "Entrada") return "Ingreso";
+  return tipo;
 }
 
-// ===============================
-// Cálculo de stock (dinámico)
-// stock = SUM(Entradas) - SUM(Salidas) + SUM(Ajustes)
-// (Ajuste: cantidad puede ser positiva o negativa; validamos no 0)
-// ===============================
+// ===== Stock dinámico (según schema) =====
+// stock = SUM(Ingreso) - SUM(Salida) + SUM(Ajuste)
 async function getStockActual(item_id) {
   const row = await dbGet(
     `
     SELECT
       COALESCE(SUM(
         CASE
-          WHEN tipo = 'Entrada' THEN cantidad
+          WHEN tipo = 'Ingreso' THEN cantidad
           WHEN tipo = 'Salida' THEN -cantidad
           WHEN tipo = 'Ajuste' THEN cantidad
           ELSE 0
@@ -153,10 +127,10 @@ async function validateInstructorIfProvided(instructor_id) {
 }
 
 // ===============================
-// 🔹 INVENTARIO ITEMS
+// ITEMS
 // ===============================
 
-// 1) GET /api/inventario/items
+// GET /api/inventario/items
 router.get("/items", async (req, res) => {
   try {
     const q = normStr(req.query.q);
@@ -189,7 +163,6 @@ router.get("/items", async (req, res) => {
     );
     const total = totalRow ? Number(totalRow.total || 0) : 0;
 
-    // Stock por item (subquery agregada)
     const rows = await dbAll(
       `
       SELECT
@@ -201,7 +174,7 @@ router.get("/items", async (req, res) => {
           item_id,
           COALESCE(SUM(
             CASE
-              WHEN tipo='Entrada' THEN cantidad
+              WHEN tipo='Ingreso' THEN cantidad
               WHEN tipo='Salida' THEN -cantidad
               WHEN tipo='Ajuste' THEN cantidad
               ELSE 0
@@ -223,7 +196,7 @@ router.get("/items", async (req, res) => {
   }
 });
 
-// 2) GET /api/inventario/items/:id
+// GET /api/inventario/items/:id
 router.get("/items/:id", async (req, res) => {
   try {
     const id = toInt(req.params.id, null);
@@ -233,20 +206,13 @@ router.get("/items/:id", async (req, res) => {
     if (!item) return res.status(404).json({ ok: false, error: "Item no encontrado" });
 
     const stock_actual = await getStockActual(id);
-
-    return res.json({
-      ok: true,
-      data: {
-        ...item,
-        stock_actual,
-      },
-    });
+    return res.json({ ok: true, data: { ...item, stock_actual } });
   } catch (err) {
     return res.status(500).json({ ok: false, error: "Error al obtener item" });
   }
 });
 
-// 3) POST /api/inventario/items (Admin)
+// POST /api/inventario/items (Admin)
 router.post("/items", adminOnly, async (req, res) => {
   try {
     const producto = normStr(req.body?.producto);
@@ -257,9 +223,7 @@ router.post("/items", adminOnly, async (req, res) => {
 
     if (!producto) return res.status(400).json({ ok: false, error: "producto es obligatorio" });
     if (stock_minimo < 0) return res.status(400).json({ ok: false, error: "stock_minimo inválido (>= 0)" });
-    if (!ITEM_ESTADOS.has(estado)) {
-      return res.status(400).json({ ok: false, error: "estado inválido (Activo|Inactivo)" });
-    }
+    if (!ITEM_ESTADOS.has(estado)) return res.status(400).json({ ok: false, error: "estado inválido" });
 
     const r = await dbRun(
       `
@@ -278,7 +242,7 @@ router.post("/items", adminOnly, async (req, res) => {
   }
 });
 
-// 4) PUT /api/inventario/items/:id (Admin)
+// PUT /api/inventario/items/:id (Admin)
 router.put("/items/:id", adminOnly, async (req, res) => {
   try {
     const id = toInt(req.params.id, null);
@@ -295,12 +259,8 @@ router.put("/items/:id", adminOnly, async (req, res) => {
     const estado = req.body?.estado !== undefined ? normStr(req.body.estado) : current.estado;
 
     if (!producto) return res.status(400).json({ ok: false, error: "producto no puede quedar vacío" });
-    if (stock_minimo === null || stock_minimo < 0) {
-      return res.status(400).json({ ok: false, error: "stock_minimo inválido (>= 0)" });
-    }
-    if (!ITEM_ESTADOS.has(estado)) {
-      return res.status(400).json({ ok: false, error: "estado inválido (Activo|Inactivo)" });
-    }
+    if (stock_minimo === null || stock_minimo < 0) return res.status(400).json({ ok: false, error: "stock_minimo inválido" });
+    if (!ITEM_ESTADOS.has(estado)) return res.status(400).json({ ok: false, error: "estado inválido" });
 
     await dbRun(
       `
@@ -320,7 +280,7 @@ router.put("/items/:id", adminOnly, async (req, res) => {
   }
 });
 
-// 5) DELETE /api/inventario/items/:id (Admin) -> soft delete
+// DELETE /api/inventario/items/:id (Admin) -> soft delete
 router.delete("/items/:id", adminOnly, async (req, res) => {
   try {
     const id = toInt(req.params.id, null);
@@ -337,45 +297,35 @@ router.delete("/items/:id", adminOnly, async (req, res) => {
 });
 
 // ===============================
-// 🔹 INVENTARIO MOVIMIENTOS (kardex)
+// MOVIMIENTOS
 // ===============================
 
-// 6) POST /api/inventario/movimientos (Admin) -> transacción
+// POST /api/inventario/movimientos (Admin)
 router.post("/movimientos", adminOnly, async (req, res) => {
   try {
     const item_id = toInt(req.body?.item_id, null);
     const fecha = normStr(req.body?.fecha) || todayISO();
-    const tipo = normStr(req.body?.tipo);
-    const cantidad = toInt(req.body?.cantidad, null);
+    let tipo = normStr(req.body?.tipo);
+    let cantidad = toInt(req.body?.cantidad, null);
     const costo_unitario = toNum(req.body?.costo_unitario, null);
     const motivo = normStr(req.body?.motivo);
 
     const curso_id = req.body?.curso_id !== undefined ? toInt(req.body.curso_id, null) : null;
-    const instructor_id =
-      req.body?.instructor_id !== undefined ? toInt(req.body.instructor_id, null) : null;
+    const instructor_id = req.body?.instructor_id !== undefined ? toInt(req.body.instructor_id, null) : null;
 
     if (!item_id) return res.status(400).json({ ok: false, error: "item_id es obligatorio" });
     if (!isISODate(fecha)) return res.status(400).json({ ok: false, error: "fecha inválida (YYYY-MM-DD)" });
-    if (!tipo || !MOV_TIPOS.has(tipo)) {
-      return res.status(400).json({ ok: false, error: "tipo inválido (Entrada|Salida|Ajuste)" });
-    }
-    if (cantidad === null || cantidad <= 0) {
-      return res.status(400).json({ ok: false, error: "cantidad debe ser > 0" });
-    }
+    if (!tipo || !MOV_TIPOS.has(tipo)) return res.status(400).json({ ok: false, error: "tipo inválido (Ingreso|Salida|Ajuste)" });
 
-    // Para Ajuste permitimos que el signo lo defina el motivo? (ERD no tiene signo).
-    // Implementación: Ajuste usa cantidad POSITIVA; si necesitas ajuste negativo, envía tipo='Salida' o usa cantidad negativa.
-    // Pero tu ERD dice cantidad INTEGER; para no romper consistencia, mantenemos cantidad>0 y Ajuste suma.
-    // Si quieres ajustes negativos, cambia esta regla en tu frontend y aquí (permitir cantidad != 0).
-    if (tipo === "Ajuste" && cantidad <= 0) {
-      return res.status(400).json({ ok: false, error: "Ajuste requiere cantidad > 0" });
-    }
+    // ✅ Ajuste puede ser positivo o negativo (tu schema lo permite: cantidad <> 0)
+    if (cantidad === null || cantidad === 0) return res.status(400).json({ ok: false, error: "cantidad no puede ser 0" });
+
+    // ✅ Normalizamos tipo "Entrada" -> "Ingreso" y guardamos en DB como "Ingreso"
+    tipo = normalizeTipo(tipo);
 
     const item = await getItemById(item_id);
     if (!item) return res.status(400).json({ ok: false, error: "item_id no existe" });
-    if (item.estado !== "Activo") {
-      return res.status(400).json({ ok: false, error: "El item debe estar Activo para registrar movimientos" });
-    }
+    if (item.estado !== "Activo") return res.status(400).json({ ok: false, error: "El item debe estar Activo" });
 
     const cCheck = await validateCursoIfProvided(curso_id);
     if (!cCheck.ok) return res.status(cCheck.code).json({ ok: false, error: cCheck.error });
@@ -383,28 +333,25 @@ router.post("/movimientos", adminOnly, async (req, res) => {
     const iCheck = await validateInstructorIfProvided(instructor_id);
     if (!iCheck.ok) return res.status(iCheck.code).json({ ok: false, error: iCheck.error });
 
-    // Transacción: validar stock y registrar
     await dbRun("BEGIN");
-
     try {
       const stockActual = await getStockActual(item_id);
 
-      if (tipo === "Salida") {
-        if (stockActual < cantidad) {
-          await dbRun("ROLLBACK");
-          return res.status(409).json({ ok: false, error: "Stock insuficiente para la salida" });
-        }
-      }
+      // Stock nuevo según regla:
+      // Ingreso suma
+      // Salida resta
+      // Ajuste suma (puede ser negativo)
+      const delta =
+        tipo === "Ingreso" ? Math.abs(cantidad) :
+        tipo === "Salida" ? -Math.abs(cantidad) :
+        // Ajuste: se respeta signo
+        cantidad;
 
-      // Nota: Ajuste aquí suma. Si quieres permitir ajuste negativo, adapta la validación y la suma.
-      // Regla de negocio: no permitir stock negativo en ningún caso
-      const stockNuevo =
-        stockActual +
-        (tipo === "Entrada" ? cantidad : tipo === "Salida" ? -cantidad : cantidad);
+      const stockNuevo = stockActual + delta;
 
       if (stockNuevo < 0) {
         await dbRun("ROLLBACK");
-        return res.status(409).json({ ok: false, error: "Movimiento inválido: resultaría en stock negativo" });
+        return res.status(409).json({ ok: false, error: "Movimiento inválido: dejaría stock negativo" });
       }
 
       const r = await dbRun(
@@ -414,7 +361,7 @@ router.post("/movimientos", adminOnly, async (req, res) => {
         VALUES
           (?, ?, ?, ?, ?, ?, ?, ?)
         `,
-        [item_id, fecha, tipo, cantidad, costo_unitario, motivo, curso_id, instructor_id]
+        [item_id, fecha, tipo, delta, costo_unitario, motivo, curso_id, instructor_id]
       );
 
       await dbRun("COMMIT");
@@ -436,7 +383,6 @@ router.post("/movimientos", adminOnly, async (req, res) => {
       );
 
       const stock_actual = await getStockActual(item_id);
-
       return res.status(201).json({ ok: true, data: { ...created, stock_actual } });
     } catch (e) {
       await dbRun("ROLLBACK");
@@ -447,7 +393,7 @@ router.post("/movimientos", adminOnly, async (req, res) => {
   }
 });
 
-// 7) GET /api/inventario/movimientos
+// GET /api/inventario/movimientos
 router.get("/movimientos", async (req, res) => {
   try {
     const item_id = toInt(req.query.item_id, null);
@@ -460,30 +406,25 @@ router.get("/movimientos", async (req, res) => {
     const where = [];
     const params = [];
 
-    if (item_id !== null) {
-      where.push("m.item_id = ?");
-      params.push(item_id);
-    }
-    if (curso_id !== null) {
-      where.push("m.curso_id = ?");
-      params.push(curso_id);
-    }
-    if (instructor_id !== null) {
-      where.push("m.instructor_id = ?");
-      params.push(instructor_id);
-    }
+    if (item_id !== null) { where.push("m.item_id = ?"); params.push(item_id); }
+    if (curso_id !== null) { where.push("m.curso_id = ?"); params.push(curso_id); }
+    if (instructor_id !== null) { where.push("m.instructor_id = ?"); params.push(instructor_id); }
+
     if (tipo) {
-      if (!MOV_TIPOS.has(tipo)) {
-        return res.status(400).json({ ok: false, error: "tipo inválido (Entrada|Salida|Ajuste)" });
+      // Acepta "Entrada" pero filtra como "Ingreso"
+      const t = normalizeTipo(tipo);
+      if (!MOV_TIPOS.has(tipo) && !MOV_TIPOS.has(t)) {
+        return res.status(400).json({ ok: false, error: "tipo inválido" });
       }
       where.push("m.tipo = ?");
-      params.push(tipo);
+      params.push(t);
     }
+
     if (desde || hasta) {
       const d = desde || "0000-01-01";
       const h = hasta || "9999-12-31";
-      if (desde && !isISODate(desde)) return res.status(400).json({ ok: false, error: "desde inválido (YYYY-MM-DD)" });
-      if (hasta && !isISODate(hasta)) return res.status(400).json({ ok: false, error: "hasta inválido (YYYY-MM-DD)" });
+      if (desde && !isISODate(desde)) return res.status(400).json({ ok: false, error: "desde inválido" });
+      if (hasta && !isISODate(hasta)) return res.status(400).json({ ok: false, error: "hasta inválido" });
       where.push("m.fecha BETWEEN ? AND ?");
       params.push(d, h);
     }
@@ -513,11 +454,7 @@ router.get("/movimientos", async (req, res) => {
   }
 });
 
-// ===============================
-// 🔹 STOCK Y REPORTES
-// ===============================
-
-// 8) GET /api/inventario/items/:id/stock
+// GET /api/inventario/items/:id/stock
 router.get("/items/:id/stock", async (req, res) => {
   try {
     const id = toInt(req.params.id, null);
@@ -530,16 +467,13 @@ router.get("/items/:id/stock", async (req, res) => {
     const stock_minimo = Number(item.stock_minimo || 0);
     const alerta = stock_actual <= stock_minimo;
 
-    return res.json({
-      ok: true,
-      data: { stock_actual, stock_minimo, alerta },
-    });
+    return res.json({ ok: true, data: { stock_actual, stock_minimo, alerta } });
   } catch (err) {
     return res.status(500).json({ ok: false, error: "Error al obtener stock" });
   }
 });
 
-// 9) GET /api/inventario/alertas  (stock_actual <= stock_minimo)
+// GET /api/inventario/alertas
 router.get("/alertas", async (req, res) => {
   try {
     const rows = await dbAll(
@@ -553,7 +487,7 @@ router.get("/alertas", async (req, res) => {
           item_id,
           COALESCE(SUM(
             CASE
-              WHEN tipo='Entrada' THEN cantidad
+              WHEN tipo='Ingreso' THEN cantidad
               WHEN tipo='Salida' THEN -cantidad
               WHEN tipo='Ajuste' THEN cantidad
               ELSE 0
@@ -567,16 +501,13 @@ router.get("/alertas", async (req, res) => {
       ORDER BY (COALESCE(it.stock_minimo, 0) - COALESCE(m.stock_actual, 0)) DESC, it.id DESC
       `
     );
-
     return res.json({ ok: true, data: rows });
   } catch (err) {
     return res.status(500).json({ ok: false, error: "Error al obtener alertas" });
   }
 });
 
-// 10) GET /api/inventario/resumen
-// Query: desde, hasta
-// Devuelve: total entradas, total salidas, costo total por curso, costo total por instructor
+// GET /api/inventario/resumen
 router.get("/resumen", async (req, res) => {
   try {
     const desde = normStr(req.query.desde);
@@ -588,25 +519,24 @@ router.get("/resumen", async (req, res) => {
     if (desde && !isISODate(desde)) return res.status(400).json({ ok: false, error: "desde inválido (YYYY-MM-DD)" });
     if (hasta && !isISODate(hasta)) return res.status(400).json({ ok: false, error: "hasta inválido (YYYY-MM-DD)" });
 
-    // Totales entradas / salidas por cantidad
     const totales = await dbGet(
       `
       SELECT
-        COALESCE(SUM(CASE WHEN tipo='Entrada' THEN cantidad ELSE 0 END), 0) AS total_entradas,
-        COALESCE(SUM(CASE WHEN tipo='Salida' THEN cantidad ELSE 0 END), 0) AS total_salidas
+        COALESCE(SUM(CASE WHEN tipo='Ingreso' THEN cantidad ELSE 0 END), 0) AS total_ingresos,
+        COALESCE(SUM(CASE WHEN tipo='Salida' THEN ABS(cantidad) ELSE 0 END), 0) AS total_salidas,
+        COALESCE(SUM(CASE WHEN tipo='Salida' THEN ABS(cantidad) * COALESCE(costo_unitario,0) ELSE 0 END), 0) AS costo_salidas
       FROM inventario_movimientos
       WHERE fecha BETWEEN ? AND ?
       `,
       [d, h]
     );
 
-    // Costos (Salida * costo_unitario) agrupados por curso
     const porCurso = await dbAll(
       `
       SELECT
         m.curso_id,
         c.nombre AS curso_nombre,
-        COALESCE(SUM(m.cantidad * COALESCE(m.costo_unitario, 0)), 0) AS costo_total
+        COALESCE(SUM(ABS(m.cantidad) * COALESCE(m.costo_unitario, 0)), 0) AS costo_total
       FROM inventario_movimientos m
       LEFT JOIN cursos c ON c.id = m.curso_id
       WHERE m.fecha BETWEEN ? AND ?
@@ -618,13 +548,12 @@ router.get("/resumen", async (req, res) => {
       [d, h]
     );
 
-    // Costos (Salida * costo_unitario) agrupados por instructor
     const porInstructor = await dbAll(
       `
       SELECT
         m.instructor_id,
         ins.nombre AS instructor_nombre,
-        COALESCE(SUM(m.cantidad * COALESCE(m.costo_unitario, 0)), 0) AS costo_total
+        COALESCE(SUM(ABS(m.cantidad) * COALESCE(m.costo_unitario, 0)), 0) AS costo_total
       FROM inventario_movimientos m
       LEFT JOIN instructores ins ON ins.id = m.instructor_id
       WHERE m.fecha BETWEEN ? AND ?
@@ -641,8 +570,9 @@ router.get("/resumen", async (req, res) => {
       data: {
         desde: d,
         hasta: h,
-        total_entradas: Number(totales?.total_entradas || 0),
+        total_ingresos: Number(totales?.total_ingresos || 0),
         total_salidas: Number(totales?.total_salidas || 0),
+        costo_salidas: Number(totales?.costo_salidas || 0),
         costo_total_por_curso: porCurso.map((r) => ({
           curso_id: r.curso_id,
           curso_nombre: r.curso_nombre,
@@ -661,30 +591,3 @@ router.get("/resumen", async (req, res) => {
 });
 
 module.exports = router;
-
-/*
-INVENTARIO se basa en: INVENTARIO_ITEMS + INVENTARIO_MOVIMIENTOS (no hay stock fijo).
-- INVENTARIO_ITEMS define el producto.
-- INVENTARIO_MOVIMIENTOS registra cada cambio.
-- Stock se calcula dinámicamente:
-  stock = SUM(Entrada) - SUM(Salida) + SUM(Ajuste).
-
-Conexión con:
-- CURSOS: inventario_movimientos.curso_id (consumo en clases / costeo por curso).
-- INSTRUCTORES: inventario_movimientos.instructor_id (responsable / control por instructor).
-- REPORTES / DASHBOARD:
-  - Alertas: /api/inventario/alertas (stock_actual <= stock_minimo)
-  - Resumen: /api/inventario/resumen?desde&hasta (entradas/salidas y costos por curso/instructor)
-  - Items con stock: /api/inventario/items
-
-Endpoints que usa el frontend:
-- Items: GET /api/inventario/items, GET /api/inventario/items/:id, GET /api/inventario/items/:id/stock
-- Alertas: GET /api/inventario/alertas
-- Kardex: GET /api/inventario/movimientos
-- Registrar movimiento: POST /api/inventario/movimientos (Admin)
-- Resumen: GET /api/inventario/resumen
-
-Seguridad:
-- Todas las rutas requieren sesión (authRequired).
-- Mutaciones (items y movimientos) requieren rol Admin (adminOnly).
-*/

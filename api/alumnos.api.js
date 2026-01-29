@@ -79,6 +79,17 @@ export async function getInscripciones(id) {
   return fetchJSON(`${BASE}/${safeId}/inscripciones`, { method: "GET" });
 }
 
+async function apiGetAlumnos() {
+  try {
+    const data = await fetchJSON("/api/alumnos");
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.warn("[pagos] /api/alumnos no disponible, sigo sin autocompletar", e);
+    return [];
+  }
+}
+
+
 // Ejemplo:
 // import { list, create } from "../../api/alumnos.api.js";
 // const { data, meta } = await list({ q: "juan", estado: "Activo" });

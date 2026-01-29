@@ -6,30 +6,28 @@
   <title>Reportes — Barber School</title>
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link rel="stylesheet" href="css/styles.css" />
+
+  <style>
+    .kpi-card { border: 1px solid rgba(0,0,0,.06); border-radius: 14px; }
+    .kpi-value { font-size: 1.35rem; font-weight: 800; letter-spacing: .2px; }
+    .kpi-sub { font-size: .82rem; color: #6c757d; }
+    .chart-box { height: 300px; }
+    .table-clickable tbody tr { cursor: pointer; }
+    .badge-soft { background: rgba(13,110,253,.10); color: #0d6efd; border: 1px solid rgba(13,110,253,.20); }
+    .sticky-actions { position: sticky; top: 0; z-index: 10; background: #f8f9fa; padding: .25rem; border-radius: .5rem; }
+  </style>
 </head>
 
 <body class="bg-light">
   <div class="d-flex">
 
-    <!-- SIDEBAR (IGUAL QUE INSTRUCTORES) -->
+    <!-- SIDEBAR (tu main.js) -->
     <aside id="sidebar" class="sidebar shadow-sm">
+      <!-- (Puedes mantener el mismo sidebar que ya usas en otras pantallas) -->
       <div class="sidebar-header d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
-          <img
-            src="assets/img/FONDO CLARO.png"
-            class="brand-logo"
-            alt="Logo"
-            style="
-              width:120px;
-              height:120px;
-              padding:0;
-              background:transparent;
-              border-radius:0;
-              object-fit:contain;
-            "
-          >
+          <img src="assets/img/FONDO CLARO.png" class="brand-logo" alt="Logo" style="width:120px;height:120px;object-fit:contain;">
           <div class="lh-1">
             <span class="fw-semibold brand-name">Develop by Diego Dell</span>
             <small class="text-muted d-block">Barber School</small>
@@ -38,15 +36,13 @@
         <button class="btn btn-sm btn-outline-secondary d-lg-none" onclick="toggleSidebar()">✖</button>
       </div>
 
-      <!-- ===== GENERAL ===== -->
-      <div class="sidebar-section">
+      <div class="sidebar-section mt-2">
         <p class="sidebar-title">General</p>
         <nav class="nav flex-column sidebar-nav">
           <a href="index.html" class="nav-link">📊 Dashboard</a>
         </nav>
       </div>
 
-      <!-- ===== GESTIÓN ACADÉMICA ===== -->
       <div class="sidebar-section mt-3">
         <p class="sidebar-title">Gestión académica</p>
         <nav class="nav flex-column sidebar-nav">
@@ -57,7 +53,6 @@
         </nav>
       </div>
 
-      <!-- ===== FINANZAS ===== -->
       <div class="sidebar-section mt-3">
         <p class="sidebar-title">Finanzas</p>
         <nav class="nav flex-column sidebar-nav">
@@ -65,8 +60,7 @@
           <a href="deudores.html" class="nav-link">⚠️ Deudores</a>
         </nav>
       </div>
-
-      <!-- ===== OPERACIÓN ===== -->
+      
       <div class="sidebar-section mt-3">
         <p class="sidebar-title">Operación</p>
         <nav class="nav flex-column sidebar-nav">
@@ -80,54 +74,55 @@
 
     <!-- MAIN -->
     <main class="main-content flex-grow-1">
-
       <div class="container-fluid py-4">
 
-        <!-- HEADER + ACCIONES -->
-        <div class="d-flex justify-content-between align-items-center mb-3">
+        <!-- Header -->
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
           <div>
-            <h4 class="mb-0">Reportes / KPIs</h4>
-            <p class="text-secondary small mb-0">Ingresos, egresos y métricas clave de la Barber School.</p>
+            <h4 class="mb-0">Reportes</h4>
+            <div class="text-secondary small">Panel financiero con KPIs, tendencias y detalle por curso.</div>
           </div>
 
-          <div class="d-flex gap-2">
+          <div class="d-flex align-items-center gap-2">
+            <span id="repHint" class="small text-muted"></span>
             <button class="btn btn-outline-primary btn-sm" id="btnRefrescarReportes">🔄 Actualizar</button>
-            <button class="btn btn-primary btn-sm" id="btnExportarPDF">🧾 Exportar</button>
+            <button class="btn btn-outline-dark btn-sm" id="btnExportarCSV">⬇️ Exportar CSV</button>
+            <button class="btn btn-outline-secondary btn-sm" id="btnImprimir">🖨️ Imprimir</button>
           </div>
         </div>
 
-        <!-- FILTROS -->
+        <!-- Filtros -->
         <div class="card shadow-sm mb-3">
           <div class="card-body">
-            <div class="row g-2 align-items-end">
+            <div class="sticky-actions">
+              <div class="d-flex flex-wrap gap-2 align-items-center">
+                <div class="btn-group btn-group-sm" role="group" aria-label="presets">
+                  <button class="btn btn-outline-secondary" data-preset="7d">7D</button>
+                  <button class="btn btn-outline-secondary" data-preset="30d">30D</button>
+                  <button class="btn btn-outline-secondary" data-preset="90d">90D</button>
+                  <button class="btn btn-outline-secondary" data-preset="12m">12M</button>
+                  <button class="btn btn-outline-secondary" data-preset="ytd">YTD</button>
+                </div>
 
-              <div class="col-md-3">
-                <label class="form-label small text-muted">Rango</label>
-                <select id="rango" class="form-select form-select-sm">
-                  <option value="12">Últimos 12 meses</option>
-                  <option value="6">Últimos 6 meses</option>
-                  <option value="3">Últimos 3 meses</option>
-                </select>
+                <div class="vr d-none d-md-block"></div>
+
+                <div class="d-flex align-items-center gap-2">
+                  <label class="small text-muted">Desde</label>
+                  <input type="date" id="desde" class="form-control form-control-sm" />
+                </div>
+
+                <div class="d-flex align-items-center gap-2">
+                  <label class="small text-muted">Hasta</label>
+                  <input type="date" id="hasta" class="form-control form-control-sm" />
+                </div>
+
+                <div class="form-check form-switch ms-2">
+                  <input class="form-check-input" type="checkbox" id="includeAnulados">
+                  <label class="form-check-label small text-muted" for="includeAnulados">Incluir anulados</label>
+                </div>
+
+                <button class="btn btn-primary btn-sm ms-auto" id="btnAplicarFiltros">Aplicar</button>
               </div>
-
-              <div class="col-md-3">
-                <label class="form-label small text-muted">Desde</label>
-                <input type="date" id="desde" class="form-control form-control-sm">
-              </div>
-
-              <div class="col-md-3">
-                <label class="form-label small text-muted">Hasta</label>
-                <input type="date" id="hasta" class="form-control form-control-sm">
-              </div>
-
-              <div class="col-md-3 d-grid">
-                <button class="btn btn-outline-primary btn-sm" id="btnAplicarFiltros">Aplicar filtros</button>
-              </div>
-
-              <div class="col-12 text-end mt-1">
-                <span id="repHint" class="small text-muted">Mostrando métricas del periodo seleccionado.</span>
-              </div>
-
             </div>
           </div>
         </div>
@@ -135,100 +130,170 @@
         <!-- KPIs -->
         <div class="row g-3 mb-3">
           <div class="col-md-3">
-            <div class="card shadow-sm h-100">
+            <div class="card kpi-card shadow-sm">
               <div class="card-body">
-                <div class="text-muted small">Ingresos</div>
-                <div id="kpiIngresos" class="fs-3 fw-semibold">Bs 0.00</div>
-                <div class="small text-success" id="kpiIngresosAux">—</div>
+                <div class="kpi-sub">Ingresos</div>
+                <div id="kpiIngresos" class="kpi-value">Bs 0.00</div>
+                <div id="kpiIngresosAux" class="kpi-sub">—</div>
               </div>
             </div>
           </div>
-
           <div class="col-md-3">
-            <div class="card shadow-sm h-100">
+            <div class="card kpi-card shadow-sm">
               <div class="card-body">
-                <div class="text-muted small">Egresos</div>
-                <div id="kpiEgresos" class="fs-3 fw-semibold">Bs 0.00</div>
-                <div class="small text-danger" id="kpiEgresosAux">—</div>
+                <div class="kpi-sub">Egresos</div>
+                <div id="kpiEgresos" class="kpi-value">Bs 0.00</div>
+                <div id="kpiEgresosAux" class="kpi-sub">—</div>
               </div>
             </div>
           </div>
-
           <div class="col-md-3">
-            <div class="card shadow-sm h-100">
+            <div class="card kpi-card shadow-sm">
               <div class="card-body">
-                <div class="text-muted small">Utilidad</div>
-                <div id="kpiUtilidad" class="fs-3 fw-semibold">Bs 0.00</div>
-                <div class="small text-primary" id="kpiUtilidadAux">—</div>
+                <div class="kpi-sub">Utilidad</div>
+                <div id="kpiUtilidad" class="kpi-value">Bs 0.00</div>
+                <div id="kpiUtilidadAux" class="kpi-sub">—</div>
               </div>
             </div>
           </div>
-
           <div class="col-md-3">
-            <div class="card shadow-sm h-100">
+            <div class="card kpi-card shadow-sm">
               <div class="card-body">
-                <div class="text-muted small">Alumnos activos</div>
-                <div id="kpiAlumnosActivos" class="fs-3 fw-semibold">0</div>
-                <div class="small text-muted" id="kpiAlumnosAux">—</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- GRÁFICOS -->
-        <div class="row g-3 mb-3">
-          <div class="col-lg-8">
-            <div class="card shadow-sm h-100">
-              <div class="card-body">
-                <div class="d-flex justify-content-between align-items-start">
+                <div class="kpi-sub">Activos</div>
+                <div class="d-flex justify-content-between">
                   <div>
-                    <h6 class="mb-1">Ingresos y egresos por mes</h6>
-                    <p class="text-secondary small mb-0">Comparativo mensual del periodo.</p>
+                    <div class="kpi-sub">Alumnos</div>
+                    <div id="kpiAlumnosActivos" class="kpi-value">0</div>
+                  </div>
+                  <div>
+                    <div class="kpi-sub">Inscripciones</div>
+                    <div id="kpiInscripcionesActivas" class="kpi-value">0</div>
                   </div>
                 </div>
-                <div class="mt-3">
-                  <canvas id="chartIngresosEgresos" height="110"></canvas>
+                <div id="kpiAlumnosAux" class="kpi-sub">—</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="row g-3 mb-3">
+          <div class="col-lg-8">
+            <div class="card shadow-sm">
+              <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                  <div class="fw-semibold">Tendencia mensual</div>
+                  <span class="badge badge-soft">Ingresos · Egresos · Utilidad</span>
+                </div>
+                <div class="chart-box">
+                  <canvas id="chartTrend"></canvas>
                 </div>
               </div>
             </div>
           </div>
-
           <div class="col-lg-4">
-            <div class="card shadow-sm h-100">
+            <div class="card shadow-sm">
               <div class="card-body">
-                <h6 class="mb-1">Distribución de pagos</h6>
-                <p class="text-secondary small mb-0">Pagados vs pendientes.</p>
-                <div class="mt-3">
-                  <canvas id="chartPagosEstado" height="170"></canvas>
+                <div class="fw-semibold mb-2">Pagos por estado</div>
+                <div class="chart-box" style="height:300px">
+                  <canvas id="chartEstado"></canvas>
+                </div>
+                <div class="small text-muted mt-2">
+                  Consejo: usa “Incluir anulados” si quieres auditar correcciones.
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- TABLA -->
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <div class="d-flex justify-content-between align-items-center">
-              <div>
-                <h6 class="mb-1">Top cursos por ingresos</h6>
-                <p class="text-secondary small mb-0">Ranking de cursos (demo).</p>
+        <!-- Rankings -->
+        <div class="row g-3">
+          <div class="col-lg-7">
+            <div class="card shadow-sm">
+              <div class="card-body">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                  <div class="fw-semibold">Top cursos (clic para detalle)</div>
+                  <input id="qTopCursos" class="form-control form-control-sm" style="max-width:260px" placeholder="Buscar curso…">
+                </div>
+
+                <div class="table-responsive">
+                  <table class="table table-sm table-hover table-clickable" id="tablaTopCursos">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Curso</th>
+                        <th class="text-end">Ingresos</th>
+                        <th class="text-end"># Pagos</th>
+                      </tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+
+                <div class="small text-muted">Tip: clic en una fila para ver pagos del curso.</div>
               </div>
             </div>
+          </div>
 
-            <div class="table-responsive mt-3">
-              <table class="table table-sm table-hover mb-0" id="tablaTopCursos">
-                <thead class="table-light">
-                  <tr>
-                    <th>Curso</th>
-                    <th class="text-end">Ingresos</th>
-                    <th class="text-end">Pagos</th>
-                  </tr>
-                </thead>
-                <tbody></tbody>
-              </table>
+          <div class="col-lg-5">
+            <div class="card shadow-sm">
+              <div class="card-body">
+                <div class="fw-semibold mb-2">Top alumnos (pagos en el periodo)</div>
+                <div class="table-responsive">
+                  <table class="table table-sm">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Alumno</th>
+                        <th class="text-end">Pagado</th>
+                        <th class="text-end">#</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tablaTopAlumnos"></tbody>
+                  </table>
+                </div>
+              </div>
             </div>
+          </div>
+        </div>
 
+        <!-- Modal detalle curso -->
+        <div class="modal fade" id="modalCursoDetalle" tabindex="-1">
+          <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+              <div class="modal-header">
+                <div>
+                  <h5 class="modal-title mb-0" id="mCursoTitle">Detalle del curso</h5>
+                  <div class="small text-muted" id="mCursoSub">—</div>
+                </div>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+              </div>
+              <div class="modal-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                  <div class="fw-semibold">Pagos del curso</div>
+                  <div class="small text-muted">Máx. 500 filas</div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table table-sm">
+                    <thead class="table-light">
+                      <tr>
+                        <th>ID</th>
+                        <th>Fecha</th>
+                        <th>Alumno</th>
+                        <th>CI</th>
+                        <th class="text-end">Monto</th>
+                        <th>Estado</th>
+                        <th>Método</th>
+                        <th>Obs</th>
+                      </tr>
+                    </thead>
+                    <tbody id="mCursoBody"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <div class="me-auto fw-semibold">Total pagado: <span id="mCursoTotal">Bs 0.00</span></div>
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -244,6 +309,7 @@
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="js/main.js"></script>
   <script src="js/reportes.js"></script>
 </body>

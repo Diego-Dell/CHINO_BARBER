@@ -3,6 +3,9 @@
 // ===============================
 // Helpers
 // ===============================
+(() => {
+  "use strict";
+
 async function fetchJSON(url, options = {}) {
   options.credentials = "include";
   const r = await fetch(url, options);
@@ -1090,3 +1093,65 @@ document.getElementById("btnGuardarAsFoto")?.addEventListener("click", async () 
     alert("Error: " + String(e.message || "desconocido"));
   }
 });
+
+
+async function verAsistenciaVisual(curso_id) {
+  try {
+const res = await fetchJSON(`/api/asistencia/curso/${cursoId}/resumen`);
+
+    const data = await res.json();
+
+    const { curso, fechas, alumnos } = data;
+
+    document.getElementById("tituloAsVisual").textContent =
+      `Asistencia — ${curso.nombre}`;
+
+    document.getElementById("infoAsVisual").textContent =
+      `Instructor: ${curso.instructor_nombre || "—"} | Clases: ${fechas.length}`;
+
+    // HEADER
+    const ths = [
+      "<th>Alumno</th>",
+      ...fechas.map((f, i) => `<th>Clase ${i + 1}</th>`)
+    ];
+    document.getElementById("theadAsVisual").innerHTML =
+      `<tr>${ths.join("")}</tr>`;
+
+    // BODY
+    const rows = alumnos.map(a => {
+      const celdas = fechas.map(f => {
+        const estado = a.asistencia?.[f]?.estado || "";
+        return `<td>${estadoVisualHTML(estado)}</td>`;
+      }).join("");
+
+      return `<tr>
+        <td class="text-start fw-semibold">${a.alumno_nombre}</td>
+        ${celdas}
+      </tr>`;
+    }).join("");
+
+    document.getElementById("tbodyAsVisual").innerHTML = rows;
+
+    new bootstrap.Modal(
+      document.getElementById("modalAsistenciaVisual")
+    ).show();
+
+  } catch (err) {
+    console.error(err);
+    alert("Error al cargar asistencia");
+  }
+}
+
+function estadoVisualHTML(estado) {
+  if (estado === "Asistio") {
+    return `<div class="asDot as_ok"><span class="asBadge">A</span></div>`;
+  }
+  if (estado === "Falto") {
+    return `<div class="asDot as_bad"><span class="asBadge">F</span></div>`;
+  }
+  if (estado === "Justificado") {
+    return `<div class="asDot as_lic"><span class="asBadge">L</span></div>`;
+  }
+  return `<div class="asDot as_empty"><span class="asBadge"></span></div>`;
+}
+})();

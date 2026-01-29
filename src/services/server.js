@@ -12,6 +12,7 @@ const backup = require("./backup"); // queda disponible para usar desde routes/a
 // ✅ Usar la MISMA conexión de DB que usan las rutas
 const db = require("../db");
 
+
 // ==============================
 // Helpers mínimos
 // ==============================
@@ -60,6 +61,7 @@ function dbGet(db, sql, params = []) {
 // App + middlewares base
 // ==============================
 const app = express();
+
 
 app.disable("x-powered-by");
 

@@ -12,23 +12,12 @@
 <body class="bg-light">
   <div class="d-flex">
 
-    <!-- SIDEBAR (MISMO ESTILO QUE INSTRUCTORES) -->
+    <!-- SIDEBAR -->
     <aside id="sidebar" class="sidebar shadow-sm">
       <div class="sidebar-header d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
-          <img
-            src="assets/img/FONDO CLARO.png"
-            class="brand-logo"
-            alt="Logo"
-            style="
-              width:120px;
-              height:120px;
-              padding:0;
-              background:transparent;
-              border-radius:0;
-              object-fit:contain;
-            "
-          >
+          <img src="assets/img/FONDO CLARO.png" class="brand-logo" alt="Logo"
+            style="width:120px;height:120px;object-fit:contain;">
           <div class="lh-1">
             <span class="fw-semibold brand-name">Develop by Diego Dell</span>
             <small class="text-muted d-block">Barber School</small>
@@ -37,7 +26,6 @@
         <button class="btn btn-sm btn-outline-secondary d-lg-none" onclick="toggleSidebar()">✖</button>
       </div>
 
-      <!-- ===== GENERAL ===== -->
       <div class="sidebar-section">
         <p class="sidebar-title">General</p>
         <nav class="nav flex-column sidebar-nav">
@@ -45,7 +33,6 @@
         </nav>
       </div>
 
-      <!-- ===== GESTIÓN ACADÉMICA ===== -->
       <div class="sidebar-section mt-3">
         <p class="sidebar-title">Gestión académica</p>
         <nav class="nav flex-column sidebar-nav">
@@ -56,7 +43,6 @@
         </nav>
       </div>
 
-      <!-- ===== FINANZAS ===== -->
       <div class="sidebar-section mt-3">
         <p class="sidebar-title">Finanzas</p>
         <nav class="nav flex-column sidebar-nav">
@@ -65,7 +51,6 @@
         </nav>
       </div>
 
-      <!-- ===== OPERACIÓN ===== -->
       <div class="sidebar-section mt-3">
         <p class="sidebar-title">Operación</p>
         <nav class="nav flex-column sidebar-nav">
@@ -79,49 +64,38 @@
 
     <!-- MAIN -->
     <main class="main-content flex-grow-1">
-
       <div class="container-fluid py-4">
 
-        <!-- HEADER + ACCIONES -->
         <div class="d-flex justify-content-between align-items-center mb-3">
           <div>
             <h4 class="mb-0">Alumnos deudores</h4>
             <p class="text-secondary small mb-0">Control de mensualidades pendientes.</p>
           </div>
-
-          <button class="btn btn-outline-primary btn-sm" onclick="cargarDeudores()">
-            🔄 Actualizar
-          </button>
+          <button class="btn btn-outline-primary btn-sm" onclick="cargarDeudores()">🔄 Actualizar</button>
         </div>
 
         <!-- FILTROS -->
         <div class="card shadow-sm mb-3">
           <div class="card-body">
             <div class="row g-2 align-items-end">
-
               <div class="col-md-4">
                 <label class="form-label small text-muted">Buscar alumno</label>
                 <input type="text" id="dBuscar" class="form-control form-control-sm" placeholder="Nombre o CI">
               </div>
-
               <div class="col-md-3">
                 <label class="form-label small text-muted">Mes</label>
                 <input type="month" id="dMes" class="form-control form-control-sm">
               </div>
-
               <div class="col-md-3">
                 <label class="form-label small text-muted">Curso</label>
                 <select id="dCurso" class="form-select form-select-sm"></select>
               </div>
-
               <div class="col-md-2 d-grid">
                 <button class="btn btn-outline-primary btn-sm" id="btnFiltrarDeudores">Filtrar</button>
               </div>
-
               <div class="col-12 text-end mt-2">
                 <span id="dResumen" class="small text-muted">0 deudores</span>
               </div>
-
             </div>
           </div>
         </div>
@@ -137,7 +111,7 @@
                   <th>Curso</th>
                   <th>Mes</th>
                   <th>Monto adeudado</th>
-                  <th style="width:140px">Acciones</th>
+                  <th style="width:180px">Acciones</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -145,44 +119,36 @@
           </div>
         </div>
 
-        <!-- MODAL: DETALLE -->
+        <!-- MODAL DETALLE -->
         <div class="modal fade" id="modalDeudaDetalle" tabindex="-1">
           <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content">
-
               <div class="modal-header">
                 <h5 class="modal-title">Detalle de deuda</h5>
                 <button class="btn-close" data-bs-dismiss="modal"></button>
               </div>
-
               <div class="modal-body">
                 <h6 id="detAlumno" class="fw-bold mb-1"></h6>
                 <p id="detCurso" class="text-muted small mb-3"></p>
 
-                <div class="table-responsive">
-                  <table class="table table-sm">
-                    <thead>
-                      <tr>
-                        <th>Concepto</th>
-                        <th>Mes</th>
-                        <th>Monto</th>
-                      </tr>
-                    </thead>
-                    <tbody id="tablaDetalleDeuda"></tbody>
-                  </table>
-                </div>
+                <table class="table table-sm">
+                  <thead>
+                    <tr>
+                      <th>Concepto</th>
+                      <th>Mes</th>
+                      <th>Monto</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tablaDetalleDeuda"></tbody>
+                </table>
 
-                <div class="text-end mt-2">
-                  <h5 class="fw-semibold">
-                    Total adeudado: <span id="detTotal" class="text-danger">Bs 0.00</span>
-                  </h5>
+                <div class="text-end">
+                  <h5>Total adeudado: <span id="detTotal" class="text-danger">Bs 0.00</span></h5>
                 </div>
               </div>
-
               <div class="modal-footer">
                 <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
               </div>
-
             </div>
           </div>
         </div>

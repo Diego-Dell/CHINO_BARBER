@@ -152,7 +152,7 @@ CREATE INDEX IF NOT EXISTS ix_asistencia_fecha ON asistencia(fecha);
 CREATE TABLE IF NOT EXISTS pagos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   inscripcion_id INTEGER NOT NULL,
-  fecha TEXT NOT NULL DEFAULT (date('now')),
+  fecha_pago TEXT NOT NULL DEFAULT (date('now')),
   monto REAL NOT NULL CHECK(monto >= 0),
   estado TEXT NOT NULL DEFAULT 'Pagado'
     CHECK(estado IN ('Pagado','Pendiente','Anulado')),
@@ -161,11 +161,10 @@ CREATE TABLE IF NOT EXISTS pagos (
   observaciones TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (inscripcion_id)
-    REFERENCES inscripciones(id)
-    ON UPDATE CASCADE
-    ON DELETE CASCADE
+  FOREIGN KEY (inscripcion_id) REFERENCES inscripciones(id)
+    ON UPDATE CASCADE ON DELETE CASCADE
 );
+
 
 CREATE INDEX IF NOT EXISTS ix_pagos_inscripcion ON pagos(inscripcion_id);
 CREATE INDEX IF NOT EXISTS ix_pagos_fecha ON pagos(fecha);
@@ -276,5 +275,3 @@ CREATE INDEX IF NOT EXISTS ix_turnos_instructor ON agenda_turnos(instructor_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_inscripcion_fecha
 ON asistencia(inscripcion_id, fecha);
-
-ALTER TABLE cursos ADD COLUMN pago_frecuencia TEXT DEFAULT 'Mensual';

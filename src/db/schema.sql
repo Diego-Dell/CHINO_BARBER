@@ -167,6 +167,8 @@ CREATE TABLE IF NOT EXISTS pagos (
     ON DELETE CASCADE
 );
 
+
+
 CREATE INDEX IF NOT EXISTS ix_pagos_inscripcion ON pagos(inscripcion_id);
 CREATE INDEX IF NOT EXISTS ix_pagos_fecha ON pagos(fecha);
 CREATE INDEX IF NOT EXISTS ix_pagos_estado ON pagos(estado);
