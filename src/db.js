@@ -14,6 +14,11 @@ const db = new sqlite3.Database(config.DB_PATH, (err) => {
   } else {
     console.log("[DB] OK:", config.DB_PATH);
   }
+
+  // evita SQLITE_BUSY cuando la DB está siendo usada por otra conexión
+try { db.configure("busyTimeout", 5000); } catch (_) {}
+try { db.run("PRAGMA busy_timeout = 5000;"); } catch (_) {}
+
 });
 
 // PRAGMAs recomendados (no rompen si fallan)
