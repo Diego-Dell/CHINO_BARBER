@@ -1,13 +1,11 @@
 // alumnos.js (frontend)
-// ✅ SIN LOGIN / SIN SESIÓN: fetchJSON no fuerza redirects ni usa credentials.
-// ✅ Limpio para copiar/pegar.
+// ✅ Estado del alumno NO se edita.
+// ✅ Activo/Inactivo viene calculado del backend según inscripciones Activas.
 
 async function fetchJSON(url, options = {}) {
   const r = await fetch(url, {
     ...options,
-    headers: {
-      ...(options.headers || {}),
-    },
+    headers: { ...(options.headers || {}) },
   });
 
   if (!r.ok) {
@@ -52,7 +50,6 @@ const alDocumento = document.getElementById("alDocumento");
 const alTelefono = document.getElementById("alTelefono");
 const alEmail = document.getElementById("alEmail");
 const alFecha = document.getElementById("alFecha");
-const alEstado = document.getElementById("alEstado");
 
 // INSCRIPCIÓN GLOBAL (modal)
 const formInscribirG = document.getElementById("formInscribirGlobal");
@@ -65,7 +62,7 @@ const inscGAlumnoInfo = document.getElementById("inscGAlumnoInfo");
 const inscGCursoId = document.getElementById("inscGCursoId");
 const inscGEstado = document.getElementById("inscGEstado");
 
-// EDITAR (si existe modal)
+// EDITAR (modal)
 const formAlumnoEdit = document.getElementById("formAlumnoEdit");
 const msgEditAlumno = document.getElementById("msgEditAlumno");
 const editId = document.getElementById("editId");
@@ -74,7 +71,6 @@ const editDocumento = document.getElementById("editDocumento");
 const editTelefono = document.getElementById("editTelefono");
 const editEmail = document.getElementById("editEmail");
 const editFecha = document.getElementById("editFecha");
-const editEstado = document.getElementById("editEstado");
 
 let alumnosCache = [];
 
@@ -89,16 +85,7 @@ async function cargarAlumnos(q = "") {
     if (q.trim()) url = `/api/alumnos/search?q=${encodeURIComponent(q)}`;
 
     const data = await fetchJSON(url);
-
-    // ✅ Soporta:
-    // - backend que devuelve array directo: [...]
-    // - backend que devuelve { ok:true, items:[...] }
-    // - backend que devuelve { items:[...] }
-    const items = Array.isArray(data)
-      ? data
-      : Array.isArray(data?.items)
-      ? data.items
-      : [];
+    const items = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
 
     alumnosCache = items;
     renderTabla(alumnosCache);
@@ -107,13 +94,11 @@ async function cargarAlumnos(q = "") {
   } catch (e) {
     console.error(e);
     if (tablaBody) {
-      tablaBody.innerHTML =
-        `<tr><td colspan="8" class="text-center text-danger">Error al cargar alumnos</td></tr>`;
+      tablaBody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">Error al cargar alumnos</td></tr>`;
     }
     if (lblResumen) lblResumen.textContent = "0 alumnos";
   }
 }
-
 
 // =====================================
 // RENDER TABLA
@@ -122,40 +107,42 @@ function renderTabla(rows) {
   if (!tablaBody) return;
 
   if (!rows.length) {
-    tablaBody.innerHTML =
-      `<tr><td colspan="8" class="text-center text-muted">Sin alumnos registrados</td></tr>`;
+    tablaBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">Sin alumnos registrados</td></tr>`;
     if (lblResumen) lblResumen.textContent = "0 alumnos";
     return;
   }
 
   tablaBody.innerHTML = rows
-    .map(
-      (a) => `
-    <tr>
-      <td>${a.id}</td>
-      <td class="fw-semibold">${esc(a.nombre)}</td>
-      <td>${esc(a.documento || "")}</td>
-      <td>${esc(a.telefono || "")}</td>
-      <td>${esc(a.email || "")}</td>
-      <td>${esc(formateaFecha(a.fecha_ingreso || ""))}</td>
-      <td>
-        <span class="badge ${String(a.estado) === "Inactivo" ? "bg-secondary" : "bg-success"}">
-          ${esc(a.estado || "Activo")}
-        </span>
-      </td>
-      <td>
-        <div class="d-flex gap-2">
-          <button class="btn btn-outline-secondary btn-sm" onclick="abrirEditarAlumno(${a.id})">
-            Editar
-          </button>
-          <button class="btn btn-outline-primary btn-sm" onclick="abrirInscribirAlumno(${a.id})">
-            Inscribir
-          </button>
-        </div>
-      </td>
-    </tr>
-  `
-    )
+    .map((a) => {
+      const estado = String(a.estado || "Inactivo");
+      const badgeClass = estado === "Activo" ? "bg-success" : "bg-secondary";
+
+      return `
+        <tr>
+          <td>${a.id}</td>
+          <td class="fw-semibold">${esc(a.nombre)}</td>
+          <td>${esc(a.documento || "")}</td>
+          <td>${esc(a.telefono || "")}</td>
+          <td>${esc(a.email || "")}</td>
+          <td>${esc(formateaFecha(a.fecha_ingreso || ""))}</td>
+          <td>
+            <span class="badge ${badgeClass}">
+              ${esc(estado)}
+            </span>
+          </td>
+          <td>
+            <div class="d-flex gap-2">
+              <button class="btn btn-outline-secondary btn-sm" onclick="abrirEditarAlumno(${a.id})">
+                Editar
+              </button>
+              <button class="btn btn-outline-primary btn-sm" onclick="abrirInscribirAlumno(${a.id})">
+                Inscribir
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    })
     .join("");
 
   if (lblResumen) lblResumen.textContent = `${rows.length} alumno${rows.length !== 1 ? "s" : ""}`;
@@ -184,7 +171,6 @@ formAlumno?.addEventListener("submit", async (e) => {
     telefono: alTelefono?.value?.trim() || "",
     email: alEmail?.value?.trim() || "",
     fecha_ingreso: alFecha?.value || hoyISO(),
-    estado: alEstado?.value || "Activo",
   };
 
   if (!payload.nombre || !payload.documento) {
@@ -208,12 +194,11 @@ formAlumno?.addEventListener("submit", async (e) => {
     });
 
     if (msgAlumno) {
-      msgAlumno.textContent = "Alumno registrado";
+      msgAlumno.textContent = "Alumno registrado (queda Inactivo hasta inscribirse)";
       msgAlumno.className = "text-success small";
     }
 
     formAlumno.reset();
-    if (alEstado) alEstado.value = "Activo";
     await cargarAlumnos();
 
     setTimeout(() => {
@@ -231,15 +216,13 @@ formAlumno?.addEventListener("submit", async (e) => {
 });
 
 // =====================================
-// EDITAR ALUMNO (requiere API PUT /api/alumnos/:id)
+// EDITAR ALUMNO
 // =====================================
 window.abrirEditarAlumno = function (id) {
   const a = alumnosCache.find((x) => Number(x.id) === Number(id));
   if (!a) return alert("Alumno no encontrado");
 
-  if (!formAlumnoEdit) {
-    return alert("Falta el modal de editar (modalAlumnoEdit + formAlumnoEdit).");
-  }
+  if (!formAlumnoEdit) return alert("Falta el modal de editar (modalAlumnoEdit + formAlumnoEdit).");
 
   editId.value = a.id ?? "";
   editNombre.value = a.nombre ?? "";
@@ -247,7 +230,6 @@ window.abrirEditarAlumno = function (id) {
   editTelefono.value = a.telefono ?? "";
   editEmail.value = a.email ?? "";
   editFecha.value = (a.fecha_ingreso || "").slice(0, 10);
-  editEstado.value = a.estado ?? "Activo";
 
   if (msgEditAlumno) {
     msgEditAlumno.textContent = "";
@@ -268,7 +250,6 @@ formAlumnoEdit?.addEventListener("submit", async (e) => {
     telefono: editTelefono?.value?.trim() || "",
     email: editEmail?.value?.trim() || "",
     fecha_ingreso: editFecha?.value || null,
-    estado: editEstado?.value || "Activo",
   };
 
   try {
@@ -298,21 +279,20 @@ formAlumnoEdit?.addEventListener("submit", async (e) => {
   } catch (err) {
     console.error(err);
     if (msgEditAlumno) {
-      msgEditAlumno.textContent = "Error al guardar (revisa backend PUT).";
+      msgEditAlumno.textContent = "Error al guardar.";
       msgEditAlumno.className = "text-danger small";
     }
   }
 });
 
 // =====================================
-// INSCRIBIR DESDE FILA (abre modal global y rellena CI)
+// INSCRIBIR DESDE FILA
 // =====================================
 window.abrirInscribirAlumno = async function (id) {
   const a = alumnosCache.find((x) => Number(x.id) === Number(id));
   if (!a) return alert("Alumno no encontrado");
 
   if (inscGDocumento) inscGDocumento.value = a.documento || "";
-
   if (inscGAlumnoId) inscGAlumnoId.value = a.id || "";
   if (inscGAlumnoNombre) inscGAlumnoNombre.textContent = a.nombre || "Alumno: —";
   if (inscGAlumnoInfo) inscGAlumnoInfo.textContent = `CI: ${a.documento || "—"}`;
@@ -339,7 +319,6 @@ async function buscarAlumnoPorCI() {
   if (!ci) return;
 
   try {
-    // si tienes endpoint directo, usamos ese (más seguro que search)
     const a = await fetchJSON(`/api/alumnos/by-documento/${encodeURIComponent(ci)}`);
 
     if (!a) {
@@ -373,7 +352,6 @@ async function cargarCursosDisponibles() {
   try {
     const cursos = await fetchJSON("/api/cursos");
     const rows = Array.isArray(cursos) ? cursos : [];
-
     const disponibles = rows.filter((c) => c.estado === "Programado" || c.estado === "En curso");
 
     if (!inscGCursoId) return;
@@ -421,33 +399,35 @@ formInscribirG?.addEventListener("submit", async (e) => {
       msgInscribirG.className = "text-success small";
     }
 
+    // ✅ refrescar tabla para que el estado cambie automáticamente
+    await cargarAlumnos(inputBuscar?.value || "");
+
     setTimeout(() => {
       const m = document.getElementById("modalInscribirGlobal");
       if (m && window.bootstrap?.Modal) window.bootstrap.Modal.getInstance(m)?.hide();
       if (msgInscribirG) msgInscribirG.textContent = "";
     }, 800);
-} catch (err) {
-  console.error(err);
+  } catch (err) {
+    console.error(err);
+    const msg = String(err.message || "");
 
-  const msg = String(err.message || "");
+    if (msg.includes("Cupo lleno")) {
+      msgInscribirG.textContent = "Cupo lleno. Ya no hay espacios en este curso.";
+      msgInscribirG.className = "text-warning small";
+      return;
+    }
 
-  if (msg.includes("Cupo lleno")) {
-    msgInscribirG.textContent = "Cupo lleno. Ya no hay espacios en este curso.";
-    msgInscribirG.className = "text-warning small";
-    return;
+    if (msg.includes("Ya inscrito")) {
+      msgInscribirG.textContent = "Este alumno ya está inscrito en este curso.";
+      msgInscribirG.className = "text-warning small";
+      return;
+    }
+
+    msgInscribirG.textContent = "No se pudo inscribir. Intenta nuevamente.";
+    msgInscribirG.className = "text-danger small";
   }
-
-  if (msg.includes("Ya inscrito")) {
-    msgInscribirG.textContent = "Este alumno ya está inscrito en este curso.";
-    msgInscribirG.className = "text-warning small";
-    return;
-  }
-
-  msgInscribirG.textContent = "No se pudo inscribir. Intenta nuevamente.";
-  msgInscribirG.className = "text-danger small";
-}
-
 });
 
-// =====================================
-document.addEventListener("DOMContentLoaded", () => cargarAlumnos());
+document.addEventListener("DOMContentLoaded", () => {
+  cargarAlumnos();
+});

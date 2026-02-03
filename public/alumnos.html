@@ -36,7 +36,6 @@
         <button class="btn btn-sm btn-outline-secondary d-lg-none" onclick="toggleSidebar()">✖</button>
       </div>
 
-      <!-- ===== GENERAL ===== -->
       <div class="sidebar-section">
         <p class="sidebar-title">General</p>
         <nav class="nav flex-column sidebar-nav">
@@ -44,7 +43,6 @@
         </nav>
       </div>
 
-      <!-- ===== GESTIÓN ACADÉMICA ===== -->
       <div class="sidebar-section mt-3">
         <p class="sidebar-title">Gestión académica</p>
         <nav class="nav flex-column sidebar-nav">
@@ -55,7 +53,6 @@
         </nav>
       </div>
 
-      <!-- ===== FINANZAS ===== -->
       <div class="sidebar-section mt-3">
         <p class="sidebar-title">Finanzas</p>
         <nav class="nav flex-column sidebar-nav">
@@ -64,7 +61,6 @@
         </nav>
       </div>
 
-      <!-- ===== OPERACIÓN ===== -->
       <div class="sidebar-section mt-3">
         <p class="sidebar-title">Operación</p>
         <nav class="nav flex-column sidebar-nav">
@@ -132,9 +128,7 @@
                     <th style="width:240px">Acciones</th>
                   </tr>
                 </thead>
-                <tbody>
-                  <!-- filas dinámicas -->
-                </tbody>
+                <tbody></tbody>
               </table>
             </div>
           </div>
@@ -181,12 +175,10 @@
                       <input type="date" class="form-control" id="alFecha">
                     </div>
 
-                    <div class="col-md-4">
-                      <label class="form-label">Estado</label>
-                      <select class="form-select" id="alEstado">
-                        <option value="Activo">Activo</option>
-                        <option value="Inactivo">Inactivo</option>
-                      </select>
+                    <div class="col-12">
+                      <small class="text-muted">
+                        * El estado se asigna automáticamente: <b>Activo</b> si tiene una inscripción <b>Activa</b>, si no, <b>Inactivo</b>.
+                      </small>
                     </div>
 
                   </div>
@@ -197,9 +189,7 @@
                 </div>
 
                 <div class="modal-footer">
-                  <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
-                    Cancelar
-                  </button>
+                  <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
                   <button type="submit" class="btn btn-primary">Guardar alumno</button>
                 </div>
 
@@ -231,9 +221,7 @@
                     </div>
 
                     <div class="col-md-3 d-grid">
-                      <button type="button" id="btnBuscarAlumnoCI" class="btn btn-outline-primary">
-                        🔎 Buscar
-                      </button>
+                      <button type="button" id="btnBuscarAlumnoCI" class="btn btn-outline-primary">🔎 Buscar</button>
                     </div>
 
                     <div class="col-md-3">
@@ -270,12 +258,8 @@
                 </div>
 
                 <div class="modal-footer">
-                  <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
-                    Cancelar
-                  </button>
-                  <button type="submit" class="btn btn-primary">
-                    Guardar inscripción
-                  </button>
+                  <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                  <button type="submit" class="btn btn-primary">Guardar inscripción</button>
                 </div>
 
               </form>
@@ -324,12 +308,10 @@
                       <input type="date" class="form-control" id="editFecha">
                     </div>
 
-                    <div class="col-md-4">
-                      <label class="form-label">Estado</label>
-                      <select class="form-select" id="editEstado">
-                        <option value="Activo">Activo</option>
-                        <option value="Inactivo">Inactivo</option>
-                      </select>
+                    <div class="col-12">
+                      <small class="text-muted">
+                        * El estado se calcula automáticamente (no se edita).
+                      </small>
                     </div>
                   </div>
 
@@ -339,66 +321,11 @@
                 </div>
 
                 <div class="modal-footer">
-                  <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
-                    Cancelar
-                  </button>
-                  <button type="submit" class="btn btn-primary">
-                    Guardar cambios
-                  </button>
+                  <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                  <button type="submit" class="btn btn-primary">Guardar cambios</button>
                 </div>
 
               </form>
-
-            </div>
-          </div>
-        </div>
-
-        <!-- ===========================
-             MODAL: HISTORIAL CURSOS
-        ============================ -->
-        <div class="modal fade" id="modalAlumnoCursos" tabindex="-1">
-          <div class="modal-dialog modal-xl modal-dialog-centered">
-            <div class="modal-content">
-
-              <div class="modal-header">
-                <h5 class="modal-title">Cursos del alumno</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-              </div>
-
-              <div class="modal-body">
-                <div class="mb-2">
-                  <div class="fw-semibold" id="alCursosNombre">Alumno</div>
-                  <small class="text-muted" id="alCursosDoc">CI:</small>
-                </div>
-
-                <div class="table-responsive">
-                  <table class="table table-sm table-hover mb-0">
-                    <thead class="table-light">
-                      <tr>
-                        <th>Curso</th>
-                        <th>Instructor</th>
-                        <th>Fecha inscripción</th>
-                        <th>Estado</th>
-                      </tr>
-                    </thead>
-                    <tbody id="tbodyAlumnoCursos">
-                      <tr>
-                        <td colspan="4" class="text-muted text-center">Cargando...</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                <div class="mt-2">
-                  <small id="msgAlumnoCursos" class="text-muted"></small>
-                </div>
-              </div>
-
-              <div class="modal-footer">
-                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
-                  Cerrar
-                </button>
-              </div>
 
             </div>
           </div>
