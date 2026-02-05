@@ -1,6 +1,6 @@
 {
   "name": "chino-barber",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "main": "electron-main.js",
   "scripts": {
@@ -48,7 +48,7 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "assets/icon.ico"
+      "icon": "assets/logo.ico"
     },
     "nsis": {
       "oneClick": false,
