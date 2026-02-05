@@ -10,6 +10,7 @@
   <link rel="icon" type="image/x-icon" href="assets/img/logo.ico">
 
 <style>
+
   /* ===== Dashboard UI Upgrade (solo index) ===== */
   :root{
     --glass: rgba(255,255,255,.70);
@@ -192,6 +193,53 @@
   .btn-primary{
     box-shadow: 0 10px 26px rgba(13,110,253,.22);
   }
+
+
+  /* ===== Responsive ajustes (solo index, sin cambiar nombres) ===== */
+  /* Evita scroll horizontal accidental */
+  html, body { max-width: 100%; overflow-x: hidden; }
+
+  /* Canvas responsive */
+  .chart-wrap{ position: relative; width: 100%; }
+  .chart-wrap canvas{ display:block; width:100% !important; max-width:100%; height:auto !important; }
+
+  /* Mejor wrap de pills/botones */
+  .pill{ max-width: 100%; }
+  .pill .text-muted{ white-space: normal; }
+
+  /* Agenda: en pantallas chicas se apila (sin perder funcionalidad) */
+  @media (max-width: 575.98px){
+    .page-title{ font-size: 1.25rem; }
+    .kpi-value{ font-size: 1.35rem; }
+    .kpi-card .card-body{ gap: 10px; }
+    .kpi-icon{ width: 46px; height: 46px; font-size: 22px; }
+
+    /* spacing más compacto */
+    .soft-card .card-body{ padding: 14px; }
+
+    /* Agenda apilada */
+    .schedule-wrap{
+      flex-direction: column;
+      overflow-x: visible;
+      padding-bottom: 0;
+      scroll-snap-type: none;
+    }
+    .schedule-col{
+      min-width: 0;
+      max-width: 100%;
+      flex: 1 1 auto;
+    }
+
+    /* chips de alumnos no deben forzar overflow */
+    .students-grid{ gap: 6px; }
+    .student-chip{ max-width: 100%; }
+  }
+
+  /* Tablets: reduce el “min-width” para menos scroll horizontal */
+  @media (min-width: 576px) and (max-width: 991.98px){
+    .schedule-col{ min-width: 280px; max-width: 340px; }
+  }
+
 </style>
 
 </head>
@@ -220,7 +268,7 @@
       <div class="sidebar-section">
         <p class="sidebar-title">General</p>
         <nav class="nav flex-column sidebar-nav">
-          <a href="index.html" class="nav-link active">📊 Dashboards</a>
+          <a href="index.html" class="nav-link active">📊 Dashboard</a>
         </nav>
       </div>
 

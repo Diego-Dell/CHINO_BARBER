@@ -48,15 +48,21 @@
     setText("kpiIngresosMes", bs(d.ingresos_mes_actual));
     setText("kpiPagos", String(d.total_pagos_registrados ?? d.total_pagos ?? 0));
 
-    // Alumnos: dividimos activos/inactivos desde /api/alumnos
-    const alumnosRaw = await fetchJSON("/api/alumnos").catch(() => []);
-    const alumnos =
-      Array.isArray(alumnosRaw) ? alumnosRaw :
-      Array.isArray(alumnosRaw?.data) ? alumnosRaw.data :
-      [];
+    // Alumnos: preferimos KPIs del backend (más rápido y consistente).
+    // Fallback: si no vienen, calculamos desde /api/alumnos.
+    let activos = Number(d.total_alumnos_activos);
+    let inactivos = Number(d.total_alumnos_inactivos);
 
-    const activos = alumnos.filter((a) => norm(a.estado) === "activo").length;
-    const inactivos = alumnos.filter((a) => norm(a.estado) === "inactivo").length;
+    if (!Number.isFinite(activos) || !Number.isFinite(inactivos)) {
+      const alumnosRaw = await fetchJSON("/api/alumnos").catch(() => []);
+      const alumnos =
+        Array.isArray(alumnosRaw) ? alumnosRaw :
+        Array.isArray(alumnosRaw?.data) ? alumnosRaw.data :
+        [];
+
+      activos = alumnos.filter((a) => norm(a.estado) === "activo").length;
+      inactivos = alumnos.filter((a) => norm(a.estado) === "inactivo").length;
+    }
 
     setText("kpiAlumnosActivos", String(activos));
     setText("kpiAlumnosInactivos", String(inactivos));

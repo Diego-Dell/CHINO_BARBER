@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -10,15 +11,39 @@
   <link rel="icon" type="image/x-icon" href="assets/img/logo.ico">
 
   <style>
-    /* Asegura scroll del modal incluso si algún CSS externo lo pisa */
-    #modalPago .modal-body{max-height:70vh;overflow:auto;}
+    /* ===== Responsive sin tocar tus IDs/campos ===== */
+
+    /* Tabla: en pantallas chicas evita que todo se aplaste */
+    #tablaPagos { min-width: 980px; }
+    .table-responsive { overflow-x: auto; }
+
+    /* Modal: fullscreen en móvil, XL en desktop */
+    @media (max-width: 576px) {
+      #modalPago .modal-body { max-height: calc(100vh - 160px); overflow: auto; }
+      #modalPago .modal-footer { position: sticky; bottom: 0; background: #fff; border-top: 1px solid #eee; }
+    }
+
+    /* Inputs del modal: mejor spacing */
+    #modalPago .form-label { margin-bottom: .35rem; }
+    #modalPago .modal-body { padding-bottom: 1rem; }
+
+    /* Cuotas: en móvil, que no quede enorme */
+    @media (max-width: 992px) {
+      #pgCuotasList { grid-template-columns: 1fr; }
+    }
+  
+    /* Fix: el sidebar tenía z-index alto y se veía encima del modal/backdrop */
+    body.modal-open .sidebar{ z-index: 1000; }
+    #modalPago{ z-index: 3100; }
+    .modal-backdrop{ z-index: 3090; }
+
   </style>
 </head>
 
 <body class="bg-light">
   <div class="d-flex">
 
-    <!-- SIDEBAR -->
+    <!-- SIDEBAR (NO TOCADO) -->
     <aside id="sidebar" class="sidebar shadow-sm">
       <div class="sidebar-header d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
@@ -74,34 +99,32 @@
 
     <!-- MAIN -->
     <main class="main-content flex-grow-1">
-
       <div class="container-fluid py-4">
 
         <!-- HEADER + ACCIONES -->
-        <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
           <div>
             <h4 class="mb-0">Pagos y mensualidades</h4>
             <p class="text-secondary small mb-0">Filtra pagos o registra uno nuevo desde el botón.</p>
           </div>
 
-          <div>
+          <div class="d-flex gap-2">
             <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalPago">
               + Registrar pago
             </button>
           </div>
         </div>
 
-        <!-- FILTROS (IDs que tu pagos.js espera) -->
+        <!-- FILTROS (mismos IDs) -->
         <div class="card shadow-sm mb-3">
           <div class="card-body">
             <div class="row g-2 align-items-end">
-
-              <div class="col-md-5">
+              <div class="col-12 col-lg-5">
                 <label class="form-label small text-muted">Buscar (Alumno / CI / Curso)</label>
                 <input id="pBuscar" type="text" class="form-control form-control-sm" placeholder="Ej: Juan Pérez o 8949400">
               </div>
 
-              <div class="col-md-3">
+              <div class="col-12 col-sm-6 col-lg-3">
                 <label class="form-label small text-muted">Estado</label>
                 <select id="pEstado" class="form-select form-select-sm">
                   <option value="">Todos</option>
@@ -112,48 +135,41 @@
                 </select>
               </div>
 
-              <div class="col-md-2">
+              <div class="col-12 col-sm-6 col-lg-2">
                 <label class="form-label small text-muted">Mes</label>
                 <input id="pMes" type="month" class="form-control form-control-sm">
               </div>
 
-              <div class="col-md-2 d-grid">
-                <button id="btnFiltrarPagos" class="btn btn-outline-primary btn-sm">
-                  Filtrar
-                </button>
+              <div class="col-12 col-lg-2 d-grid">
+                <button id="btnFiltrarPagos" class="btn btn-outline-primary btn-sm">Filtrar</button>
               </div>
 
               <div class="col-12 pt-1">
                 <span id="pResumen" class="small text-muted"></span>
               </div>
-
             </div>
           </div>
         </div>
 
-        <!-- TABLA (IDs que tu pagos.js espera) -->
+        <!-- TABLA -->
         <div class="card shadow-sm">
           <div class="table-responsive p-0">
             <table id="tablaPagos" class="table table-hover table-sm mb-0 align-middle">
-<thead class="table-light">
-  <tr>
-    <th style="width:70px">ID</th>
-    <th style="width:120px">Fecha</th>
-    <th>Alumno</th>
-    <th style="width:160px">CI</th>
-    <th>Curso</th>
-    <th class="text-end" style="width:130px">Monto</th>
-    <th style="width:120px">Estado</th>
-    <th style="width:140px">Método</th>
-    <th style="width:120px">Obs</th>
-    <th class="text-end" style="width:120px">Acciones</th>
-  </tr>
-</thead>
-
-<tbody>
-
-</tbody>
-
+              <thead class="table-light">
+                <tr>
+                  <th style="width:70px">ID</th>
+                  <th style="width:120px">Fecha</th>
+                  <th>Alumno</th>
+                  <th style="width:160px">CI</th>
+                  <th>Curso</th>
+                  <th class="text-end" style="width:130px">Monto</th>
+                  <th style="width:120px">Estado</th>
+                  <th style="width:140px">Método</th>
+                  <th style="width:160px">Obs</th>
+                  <th class="text-end" style="width:140px">Acciones</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
             </table>
           </div>
         </div>
@@ -162,11 +178,10 @@
     </main>
   </div>
 
-  <!-- =========================
-       MODAL: REGISTRAR PAGO
-  ========================== -->
+  <!-- MODAL: REGISTRAR PAGO (mismos campos/IDs, más responsive) -->
   <div class="modal fade" id="modalPago" tabindex="-1">
-    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <!-- fullscreen en móvil, xl en escritorio -->
+    <div class="modal-dialog modal-xl modal-fullscreen-sm-down modal-dialog-scrollable">
       <div class="modal-content">
 
         <form id="formPago">
@@ -178,30 +193,31 @@
           <div class="modal-body">
             <div class="row g-3">
 
-              <div class="col-md-6">
+              <div class="col-12 col-lg-6">
                 <label class="form-label">Nombre del alumno *</label>
                 <input type="text" class="form-control" id="pgAlumno" placeholder="Escribe nombre..." required>
                 <input type="hidden" id="pgAlumnoId">
               </div>
 
-              <div class="col-md-6">
+              <div class="col-12 col-lg-6">
                 <label class="form-label">Documento / CI</label>
                 <input type="text" class="form-control" id="pgDocumento" placeholder="Escribe CI...">
               </div>
 
               <div class="col-12">
-                <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#pgAlumnosCollapse" aria-expanded="false">
+                <button class="btn btn-outline-secondary btn-sm" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#pgAlumnosCollapse" aria-expanded="false">
                   Ver lista de alumnos
                 </button>
 
                 <div class="collapse mt-2" id="pgAlumnosCollapse">
                   <div class="card card-body p-2">
                     <div class="row g-2 align-items-end">
-                      <div class="col-md-8">
+                      <div class="col-12 col-lg-8">
                         <label class="form-label small text-muted mb-1">Buscar alumno (nombre o CI)</label>
                         <input id="pgAlumnoSearch" class="form-control form-control-sm" placeholder="Ej: Diego o 8949400">
                       </div>
-                      <div class="col-md-4 d-grid">
+                      <div class="col-12 col-lg-4 d-grid">
                         <button id="pgAlumnoSearchBtn" type="button" class="btn btn-sm btn-outline-primary">Buscar</button>
                       </div>
                       <div class="col-12">
@@ -211,17 +227,16 @@
                   </div>
                 </div>
 
-                <!-- datalist opcional (autocompletar) -->
                 <datalist id="pgAlumnosDL"></datalist>
                 <datalist id="pgDocDL"></datalist>
               </div>
 
-              <div class="col-md-7">
+              <div class="col-12 col-lg-7">
                 <label class="form-label">Curso *</label>
                 <select class="form-select" id="pgCursoId" required></select>
               </div>
 
-              <div class="col-md-5">
+              <div class="col-12 col-lg-5">
                 <label class="form-label">Nro cuotas *</label>
                 <select class="form-select" id="pgNroCuotas" required>
                   <option value="1">1</option>
@@ -234,14 +249,14 @@
               </div>
 
               <div class="col-12">
-                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 border rounded-3 p-3 bg-light">
+                <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-2 border rounded-3 p-3 bg-light">
                   <div>
                     <div class="fw-semibold">Total del curso:</div>
                     <div class="fs-5 fw-bold" id="pgTotalCurso">Bs 0.00</div>
                     <div class="small text-muted" id="pgCursoInfo">—</div>
                   </div>
 
-                  <div class="text-end">
+                  <div class="text-start text-md-end">
                     <div class="small text-muted">Total pagado (cuotas marcadas):</div>
                     <div class="fw-bold" id="pgTotalPagado">Bs 0.00</div>
                     <div class="small text-muted">Saldo:</div>
@@ -250,14 +265,13 @@
                 </div>
               </div>
 
-              <!-- CUOTAS + PANEL DERECHO (FECHA + MÉTODO + OBS) -->
+              <!-- CUOTAS + PANEL DERECHO -->
               <div class="col-12">
                 <div class="row g-3 align-items-start">
 
-                  <!-- CUOTAS centradas y compactas -->
-                  <div class="col-lg-7">
-                    <div class="border rounded-3 p-3 mx-auto" style="max-width: 560px;">
-                      <div class="d-flex justify-content-between align-items-center mb-2">
+                  <div class="col-12 col-lg-7">
+                    <div class="border rounded-3 p-3">
+                      <div class="d-flex flex-wrap justify-content-between align-items-center gap-1 mb-2">
                         <div class="fw-bold">Cuotas</div>
                         <div class="small text-muted">Selecciona una cuota</div>
                       </div>
@@ -270,15 +284,14 @@
                     </div>
                   </div>
 
-                  <!-- PANEL DERECHO -->
-                  <div class="col-lg-5">
+                  <div class="col-12 col-lg-5">
                     <div class="border rounded-3 p-3 bg-light">
                       <div class="row g-2">
-                        <div class="col-6">
+                        <div class="col-12 col-sm-6">
                           <label class="form-label">Fecha *</label>
                           <input type="date" class="form-control" id="pgFecha" required>
                         </div>
-                        <div class="col-6">
+                        <div class="col-12 col-sm-6">
                           <label class="form-label">Método</label>
                           <select class="form-select" id="pgMetodo">
                             <option value="Efectivo">Efectivo</option>

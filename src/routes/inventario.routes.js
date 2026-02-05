@@ -1,15 +1,8 @@
-// src/routes/inventario.routes.js
 const express = require("express");
 const db = require("../db");
 const router = express.Router();
 
-// ===== Middlewares (placeholder) =====
-function authRequired(req, res, next) { return next(); }
-function adminOnly(req, res, next) { return next(); }
-
-router.use(authRequired);
-
-// ===== Helpers SQLite promisificados =====
+// ================= helpers DB =================
 function dbRun(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
@@ -34,559 +27,404 @@ function dbAll(sql, params = []) {
     });
   });
 }
-
-// ===== Utilidades =====
-const ITEM_ESTADOS = new Set(["Activo", "Inactivo"]);
-// ✅ Acepta "Ingreso" (DB) y también "Entrada" (compatibilidad)
-const MOV_TIPOS = new Set(["Ingreso", "Entrada", "Salida", "Ajuste"]);
-
-function normStr(v) {
-  if (v === undefined || v === null) return null;
-  const s = String(v).trim();
-  return s.length ? s : null;
-}
-function toInt(v, def = null) {
-  if (v === undefined || v === null || v === "") return def;
+function toInt(v, def = 0) {
   const n = Number(v);
   return Number.isFinite(n) ? Math.trunc(n) : def;
 }
-function toNum(v, def = null) {
-  if (v === undefined || v === null || v === "") return def;
+function toNum(v, def = 0) {
   const n = Number(v);
   return Number.isFinite(n) ? n : def;
 }
-function pad2(n) { return String(n).padStart(2, "0"); }
-function todayISO() {
+function s(v) {
+  return String(v ?? "").trim();
+}
+function isoDate(v) {
+  const x = s(v).slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(x)) return x;
   const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-function isISODate(s) {
-  if (typeof s !== "string") return false;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-  const dt = new Date(`${s}T00:00:00Z`);
-  const [y, m, d] = s.split("-").map(Number);
-  return (
-    dt.getUTCFullYear() === y &&
-    dt.getUTCMonth() + 1 === m &&
-    dt.getUTCDate() === d
-  );
-}
-function likeWrap(s) { return `%${String(s || "").trim()}%`; }
-
-// ✅ Normaliza tipo: Entrada -> Ingreso
-function normalizeTipo(tipo) {
-  if (tipo === "Entrada") return "Ingreso";
-  return tipo;
+  return d.toISOString().slice(0, 10);
 }
 
-// ===== Stock dinámico (según schema) =====
-// stock = SUM(Ingreso) - SUM(Salida) + SUM(Ajuste)
-async function getStockActual(item_id) {
-  const row = await dbGet(
-    `
-    SELECT
-      COALESCE(SUM(
-        CASE
-          WHEN tipo = 'Ingreso' THEN cantidad
-          WHEN tipo = 'Salida' THEN -cantidad
-          WHEN tipo = 'Ajuste' THEN cantidad
-          ELSE 0
-        END
-      ), 0) AS stock_actual
-    FROM inventario_movimientos
-    WHERE item_id = ?
-    `,
-    [item_id]
-  );
-  return row ? Number(row.stock_actual || 0) : 0;
+// ================= esquema dinámico + migraciones ligeras =================
+let _ITEMS_COLS = null;
+
+async function getItemsCols() {
+  if (_ITEMS_COLS) return _ITEMS_COLS;
+  const rows = await dbAll("PRAGMA table_info(inventario_items)");
+  _ITEMS_COLS = new Set(rows.map((r) => String(r.name || "").toLowerCase()));
+  return _ITEMS_COLS;
+}
+function hasCol(cols, name) {
+  return cols.has(String(name).toLowerCase());
 }
 
-async function getItemById(item_id) {
-  return await dbGet(
-    `
-    SELECT id, producto, categoria, unidad, stock_minimo, estado
-    FROM inventario_items
-    WHERE id = ?
-    `,
-    [item_id]
-  );
+// Precio del item (solo al crear/editar item). Si no existe la columna, la creamos.
+async function ensurePrecioCol() {
+  const cols = await getItemsCols();
+  if (hasCol(cols, "precio")) return;
+
+  await dbRun("ALTER TABLE inventario_items ADD COLUMN precio REAL DEFAULT 0");
+  _ITEMS_COLS = null;
+  await getItemsCols();
 }
 
-async function validateCursoIfProvided(curso_id) {
-  if (curso_id === null || curso_id === undefined) return { ok: true };
-  const row = await dbGet(`SELECT id FROM cursos WHERE id = ?`, [curso_id]);
-  if (!row) return { ok: false, code: 400, error: "curso_id no existe" };
-  return { ok: true };
+// ================= stock (calculado) =================
+function stockFromMovs(movs) {
+  // suma: Ingreso / Compra / Devolucion
+  // resta: Egreso / Consumo / Prestamo
+  let stock = 0;
+  for (const m of movs) {
+    const tipo = String(m.tipo || "").toLowerCase();
+    const cant = toInt(m.cantidad, 0);
+    const suma = tipo.includes("ing") || tipo.includes("comp") || tipo.includes("dev");
+    const resta = tipo.includes("egr") || tipo.includes("cons") || tipo.includes("pres");
+    if (suma) stock += cant;
+    else if (resta) stock -= cant;
+  }
+  return stock;
 }
 
-async function validateInstructorIfProvided(instructor_id) {
-  if (instructor_id === null || instructor_id === undefined) return { ok: true };
-  const row = await dbGet(`SELECT id FROM instructores WHERE id = ?`, [instructor_id]);
-  if (!row) return { ok: false, code: 400, error: "instructor_id no existe" };
-  return { ok: true };
+async function getStockByItemId(itemId) {
+  const movs = await dbAll(`SELECT tipo, cantidad FROM inventario_movimientos WHERE item_id = ?`, [itemId]);
+  return stockFromMovs(movs);
 }
 
-// ===============================
-// ITEMS
-// ===============================
-
-// GET /api/inventario/items
+// ================= GET /api/inventario/items =================
 router.get("/items", async (req, res) => {
   try {
-    const q = normStr(req.query.q);
-    const estado = normStr(req.query.estado);
+    await ensurePrecioCol();
 
-    const limit = Math.max(1, toInt(req.query.limit, 50) ?? 50);
-    const offset = Math.max(0, toInt(req.query.offset, 0) ?? 0);
-
-    const where = [];
+    const q = s(req.query.q);
+    const estado = s(req.query.estado);
     const params = [];
+    let where = "WHERE 1=1";
 
+    if (q) {
+      where += " AND (producto LIKE ? OR categoria LIKE ?)";
+      params.push(`%${q}%`, `%${q}%`);
+    }
     if (estado) {
-      if (!ITEM_ESTADOS.has(estado)) {
-        return res.status(400).json({ ok: false, error: "estado inválido (Activo|Inactivo)" });
-      }
-      where.push("it.estado = ?");
+      where += " AND estado = ?";
       params.push(estado);
     }
 
-    if (q) {
-      where.push("(it.producto LIKE ? OR it.categoria LIKE ?)");
-      params.push(likeWrap(q), likeWrap(q));
-    }
-
-    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-    const totalRow = await dbGet(
-      `SELECT COUNT(*) AS total FROM inventario_items it ${whereSql}`,
+    const items = await dbAll(
+      `
+      SELECT id, producto, categoria, unidad, stock_minimo, estado, COALESCE(precio,0) AS precio
+      FROM inventario_items
+      ${where}
+      ORDER BY id DESC
+      LIMIT 500
+      `,
       params
     );
-    const total = totalRow ? Number(totalRow.total || 0) : 0;
 
-    const rows = await dbAll(
-      `
-      SELECT
-        it.id, it.producto, it.categoria, it.unidad, it.stock_minimo, it.estado,
-        COALESCE(m.stock_actual, 0) AS stock_actual
-      FROM inventario_items it
-      LEFT JOIN (
-        SELECT
-          item_id,
-          COALESCE(SUM(
-            CASE
-              WHEN tipo='Ingreso' THEN cantidad
-              WHEN tipo='Salida' THEN -cantidad
-              WHEN tipo='Ajuste' THEN cantidad
-              ELSE 0
-            END
-          ), 0) AS stock_actual
-        FROM inventario_movimientos
-        GROUP BY item_id
-      ) m ON m.item_id = it.id
-      ${whereSql}
-      ORDER BY it.id DESC
-      LIMIT ? OFFSET ?
-      `,
-      [...params, limit, offset]
-    );
+    const out = [];
+    for (const it of items) {
+      const stock = await getStockByItemId(it.id);
+      out.push({ ...it, stock });
+    }
 
-    return res.json({ ok: true, data: rows, meta: { limit, offset, total } });
+    res.json({ ok: true, items: out });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al listar items" });
+    console.error("[INVENTARIO][GET /items]", err);
+    res.status(500).json({ ok: false, error: "Error al listar items" });
   }
 });
 
-// GET /api/inventario/items/:id
-router.get("/items/:id", async (req, res) => {
+// ================= POST /api/inventario/items =================
+router.post("/items", async (req, res) => {
   try {
-    const id = toInt(req.params.id, null);
-    if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
+    await ensurePrecioCol();
 
-    const item = await getItemById(id);
-    if (!item) return res.status(404).json({ ok: false, error: "Item no encontrado" });
+    const b = req.body || {};
+    const producto = s(b.producto);
+    const categoria = s(b.categoria);
+    const unidad = s(b.unidad);
+    const stock_minimo = toInt(b.stock_minimo, 0);
+    const precio = toNum(b.precio, 0);
+    const estado = s(b.estado) || "Activo";
 
-    const stock_actual = await getStockActual(id);
-    return res.json({ ok: true, data: { ...item, stock_actual } });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al obtener item" });
-  }
-});
-
-// POST /api/inventario/items (Admin)
-router.post("/items", adminOnly, async (req, res) => {
-  try {
-    const producto = normStr(req.body?.producto);
-    const categoria = normStr(req.body?.categoria);
-    const unidad = normStr(req.body?.unidad);
-    const stock_minimo = toInt(req.body?.stock_minimo, 0) ?? 0;
-    const estado = normStr(req.body?.estado) || "Activo";
-
-    if (!producto) return res.status(400).json({ ok: false, error: "producto es obligatorio" });
-    if (stock_minimo < 0) return res.status(400).json({ ok: false, error: "stock_minimo inválido (>= 0)" });
-    if (!ITEM_ESTADOS.has(estado)) return res.status(400).json({ ok: false, error: "estado inválido" });
+    if (!producto) return res.status(400).json({ ok: false, error: "Producto es obligatorio" });
 
     const r = await dbRun(
       `
-      INSERT INTO inventario_items (producto, categoria, unidad, stock_minimo, estado)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO inventario_items (producto, categoria, unidad, stock_minimo, precio, estado)
+      VALUES (?, ?, ?, ?, ?, ?)
       `,
-      [producto, categoria, unidad, stock_minimo, estado]
+      [producto, categoria || null, unidad || null, stock_minimo, precio, estado]
     );
 
-    const created = await getItemById(r.lastID);
-    const stock_actual = await getStockActual(r.lastID);
-
-    return res.status(201).json({ ok: true, data: { ...created, stock_actual } });
+    res.status(201).json({ ok: true, data: { id: r.lastID } });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al crear item" });
+    console.error("[INVENTARIO][POST /items]", err);
+    res.status(500).json({ ok: false, error: "Error al crear item" });
   }
 });
 
-// PUT /api/inventario/items/:id (Admin)
-router.put("/items/:id", adminOnly, async (req, res) => {
+// ================= PUT /api/inventario/items/:id =================
+router.put("/items/:id", async (req, res) => {
+  const id = toInt(req.params.id, 0);
+  if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
+
   try {
-    const id = toInt(req.params.id, null);
-    if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
+    await ensurePrecioCol();
 
-    const current = await getItemById(id);
-    if (!current) return res.status(404).json({ ok: false, error: "Item no encontrado" });
+    const b = req.body || {};
+    const producto = s(b.producto);
+    const categoria = s(b.categoria);
+    const unidad = s(b.unidad);
+    const stock_minimo = toInt(b.stock_minimo, 0);
+    const precio = toNum(b.precio, 0);
+    const estado = s(b.estado) || "Activo";
 
-    const producto = req.body?.producto !== undefined ? normStr(req.body.producto) : current.producto;
-    const categoria = req.body?.categoria !== undefined ? normStr(req.body.categoria) : current.categoria;
-    const unidad = req.body?.unidad !== undefined ? normStr(req.body.unidad) : current.unidad;
-    const stock_minimo =
-      req.body?.stock_minimo !== undefined ? toInt(req.body.stock_minimo, null) : Number(current.stock_minimo || 0);
-    const estado = req.body?.estado !== undefined ? normStr(req.body.estado) : current.estado;
-
-    if (!producto) return res.status(400).json({ ok: false, error: "producto no puede quedar vacío" });
-    if (stock_minimo === null || stock_minimo < 0) return res.status(400).json({ ok: false, error: "stock_minimo inválido" });
-    if (!ITEM_ESTADOS.has(estado)) return res.status(400).json({ ok: false, error: "estado inválido" });
+    if (!producto) return res.status(400).json({ ok: false, error: "Producto es obligatorio" });
 
     await dbRun(
       `
       UPDATE inventario_items
-      SET producto = ?, categoria = ?, unidad = ?, stock_minimo = ?, estado = ?
+      SET producto = ?, categoria = ?, unidad = ?, stock_minimo = ?, precio = ?, estado = ?
       WHERE id = ?
       `,
-      [producto, categoria, unidad, stock_minimo, estado, id]
+      [producto, categoria || null, unidad || null, stock_minimo, precio, estado, id]
     );
 
-    const updated = await getItemById(id);
-    const stock_actual = await getStockActual(id);
-
-    return res.json({ ok: true, data: { ...updated, stock_actual } });
+    res.json({ ok: true });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al actualizar item" });
+    console.error("[INVENTARIO][PUT /items/:id]", err);
+    res.status(500).json({ ok: false, error: "Error al actualizar item" });
   }
 });
 
-// DELETE /api/inventario/items/:id (Admin) -> soft delete
-router.delete("/items/:id", adminOnly, async (req, res) => {
-  try {
-    const id = toInt(req.params.id, null);
-    if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
-
-    const exists = await getItemById(id);
-    if (!exists) return res.status(404).json({ ok: false, error: "Item no encontrado" });
-
-    await dbRun(`UPDATE inventario_items SET estado = 'Inactivo' WHERE id = ?`, [id]);
-    return res.json({ ok: true });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al inactivar item" });
-  }
-});
-
-// ===============================
-// MOVIMIENTOS
-// ===============================
-
-// POST /api/inventario/movimientos (Admin)
-router.post("/movimientos", adminOnly, async (req, res) => {
-  try {
-    const item_id = toInt(req.body?.item_id, null);
-    const fecha = normStr(req.body?.fecha) || todayISO();
-    let tipo = normStr(req.body?.tipo);
-    let cantidad = toInt(req.body?.cantidad, null);
-    const costo_unitario = toNum(req.body?.costo_unitario, null);
-    const motivo = normStr(req.body?.motivo);
-
-    const curso_id = req.body?.curso_id !== undefined ? toInt(req.body.curso_id, null) : null;
-    const instructor_id = req.body?.instructor_id !== undefined ? toInt(req.body.instructor_id, null) : null;
-
-    if (!item_id) return res.status(400).json({ ok: false, error: "item_id es obligatorio" });
-    if (!isISODate(fecha)) return res.status(400).json({ ok: false, error: "fecha inválida (YYYY-MM-DD)" });
-    if (!tipo || !MOV_TIPOS.has(tipo)) return res.status(400).json({ ok: false, error: "tipo inválido (Ingreso|Salida|Ajuste)" });
-
-    // ✅ Ajuste puede ser positivo o negativo (tu schema lo permite: cantidad <> 0)
-    if (cantidad === null || cantidad === 0) return res.status(400).json({ ok: false, error: "cantidad no puede ser 0" });
-
-    // ✅ Normalizamos tipo "Entrada" -> "Ingreso" y guardamos en DB como "Ingreso"
-    tipo = normalizeTipo(tipo);
-
-    const item = await getItemById(item_id);
-    if (!item) return res.status(400).json({ ok: false, error: "item_id no existe" });
-    if (item.estado !== "Activo") return res.status(400).json({ ok: false, error: "El item debe estar Activo" });
-
-    const cCheck = await validateCursoIfProvided(curso_id);
-    if (!cCheck.ok) return res.status(cCheck.code).json({ ok: false, error: cCheck.error });
-
-    const iCheck = await validateInstructorIfProvided(instructor_id);
-    if (!iCheck.ok) return res.status(iCheck.code).json({ ok: false, error: iCheck.error });
-
-    await dbRun("BEGIN");
-    try {
-      const stockActual = await getStockActual(item_id);
-
-      // Stock nuevo según regla:
-      // Ingreso suma
-      // Salida resta
-      // Ajuste suma (puede ser negativo)
-      const delta =
-        tipo === "Ingreso" ? Math.abs(cantidad) :
-        tipo === "Salida" ? -Math.abs(cantidad) :
-        // Ajuste: se respeta signo
-        cantidad;
-
-      const stockNuevo = stockActual + delta;
-
-      if (stockNuevo < 0) {
-        await dbRun("ROLLBACK");
-        return res.status(409).json({ ok: false, error: "Movimiento inválido: dejaría stock negativo" });
-      }
-
-      const r = await dbRun(
-        `
-        INSERT INTO inventario_movimientos
-          (item_id, fecha, tipo, cantidad, costo_unitario, motivo, curso_id, instructor_id)
-        VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-        [item_id, fecha, tipo, delta, costo_unitario, motivo, curso_id, instructor_id]
-      );
-
-      await dbRun("COMMIT");
-
-      const created = await dbGet(
-        `
-        SELECT
-          m.id, m.item_id, m.fecha, m.tipo, m.cantidad, m.costo_unitario, m.motivo, m.curso_id, m.instructor_id,
-          it.producto AS item_producto,
-          c.nombre AS curso_nombre,
-          ins.nombre AS instructor_nombre
-        FROM inventario_movimientos m
-        JOIN inventario_items it ON it.id = m.item_id
-        LEFT JOIN cursos c ON c.id = m.curso_id
-        LEFT JOIN instructores ins ON ins.id = m.instructor_id
-        WHERE m.id = ?
-        `,
-        [r.lastID]
-      );
-
-      const stock_actual = await getStockActual(item_id);
-      return res.status(201).json({ ok: true, data: { ...created, stock_actual } });
-    } catch (e) {
-      await dbRun("ROLLBACK");
-      throw e;
-    }
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al registrar movimiento" });
-  }
-});
-
-// GET /api/inventario/movimientos
+// ================= GET /api/inventario/movimientos =================
 router.get("/movimientos", async (req, res) => {
   try {
-    const item_id = toInt(req.query.item_id, null);
-    const curso_id = toInt(req.query.curso_id, null);
-    const instructor_id = toInt(req.query.instructor_id, null);
-    const tipo = normStr(req.query.tipo);
-    const desde = normStr(req.query.desde);
-    const hasta = normStr(req.query.hasta);
+    const item_id = toInt(req.query.item_id, 0);
 
-    const where = [];
     const params = [];
-
-    if (item_id !== null) { where.push("m.item_id = ?"); params.push(item_id); }
-    if (curso_id !== null) { where.push("m.curso_id = ?"); params.push(curso_id); }
-    if (instructor_id !== null) { where.push("m.instructor_id = ?"); params.push(instructor_id); }
-
-    if (tipo) {
-      // Acepta "Entrada" pero filtra como "Ingreso"
-      const t = normalizeTipo(tipo);
-      if (!MOV_TIPOS.has(tipo) && !MOV_TIPOS.has(t)) {
-        return res.status(400).json({ ok: false, error: "tipo inválido" });
-      }
-      where.push("m.tipo = ?");
-      params.push(t);
+    let where = "WHERE 1=1";
+    if (item_id) {
+      where += " AND m.item_id = ?";
+      params.push(item_id);
     }
-
-    if (desde || hasta) {
-      const d = desde || "0000-01-01";
-      const h = hasta || "9999-12-31";
-      if (desde && !isISODate(desde)) return res.status(400).json({ ok: false, error: "desde inválido" });
-      if (hasta && !isISODate(hasta)) return res.status(400).json({ ok: false, error: "hasta inválido" });
-      where.push("m.fecha BETWEEN ? AND ?");
-      params.push(d, h);
-    }
-
-    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
     const rows = await dbAll(
       `
-      SELECT
-        m.id, m.item_id, m.fecha, m.tipo, m.cantidad, m.costo_unitario, m.motivo, m.curso_id, m.instructor_id,
-        it.producto AS item_producto,
-        c.nombre AS curso_nombre,
-        ins.nombre AS instructor_nombre
+      SELECT 
+        m.*,
+        COALESCE(it.producto,'') AS item_producto,
+        COALESCE(i.nombre,'') AS instructor_nombre,
+        COALESCE(c.nombre,'') AS curso_nombre
       FROM inventario_movimientos m
-      JOIN inventario_items it ON it.id = m.item_id
+      LEFT JOIN inventario_items it ON it.id = m.item_id
+      LEFT JOIN instructores i ON i.id = m.instructor_id
       LEFT JOIN cursos c ON c.id = m.curso_id
-      LEFT JOIN instructores ins ON ins.id = m.instructor_id
-      ${whereSql}
-      ORDER BY m.fecha DESC, m.id DESC
+      ${where}
+      ORDER BY m.id DESC
+      LIMIT 1000
       `,
       params
     );
 
-    return res.json({ ok: true, data: rows });
+    res.json({ ok: true, items: rows });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al listar movimientos" });
+    console.error("[INVENTARIO][GET /movimientos]", err);
+    res.status(500).json({ ok: false, error: "Error al listar movimientos" });
   }
 });
 
-// GET /api/inventario/items/:id/stock
-router.get("/items/:id/stock", async (req, res) => {
+// ================= POST /api/inventario/movimientos =================
+router.post("/movimientos", async (req, res) => {
   try {
-    const id = toInt(req.params.id, null);
-    if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
+    await ensurePrecioCol();
 
-    const item = await getItemById(id);
+    const b = req.body || {};
+    const item_id = toInt(b.item_id, 0);
+    const tipo = s(b.tipo); // Ingreso | Egreso | Prestamo | Devolucion
+    const cantidad = toInt(b.cantidad, 0);
+    const fecha = isoDate(b.fecha);
+    const curso_id = toInt(b.curso_id, 0) || null;
+    const instructor_id = toInt(b.instructor_id, 0) || null;
+    const nota = s(b.nota) || null;
+
+    if (!item_id) return res.status(400).json({ ok: false, error: "item_id requerido" });
+    if (!tipo) return res.status(400).json({ ok: false, error: "tipo requerido" });
+    if (cantidad <= 0) return res.status(400).json({ ok: false, error: "cantidad inválida" });
+
+    const item = await dbGet(`SELECT id, COALESCE(precio,0) AS precio FROM inventario_items WHERE id = ?`, [item_id]);
     if (!item) return res.status(404).json({ ok: false, error: "Item no encontrado" });
 
-    const stock_actual = await getStockActual(id);
-    const stock_minimo = Number(item.stock_minimo || 0);
-    const alerta = stock_actual <= stock_minimo;
+    const tipoLower = tipo.toLowerCase();
+    const esSalida = tipoLower.includes("egr") || tipoLower.includes("pres") || tipoLower.includes("cons");
+    if (esSalida) {
+      const stock = await getStockByItemId(item_id);
+      if (stock < cantidad) return res.status(400).json({ ok: false, error: "Stock insuficiente" });
+    }
 
-    return res.json({ ok: true, data: { stock_actual, stock_minimo, alerta } });
+    let costo_total = 0;
+    if (tipoLower.includes("egr") || tipoLower.includes("cons")) {
+      costo_total = toNum(item.precio, 0) * cantidad;
+    }
+
+    const r = await dbRun(
+      `
+      INSERT INTO inventario_movimientos (item_id, tipo, cantidad, fecha, costo_total, curso_id, instructor_id, nota)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [item_id, tipo, cantidad, fecha, costo_total, curso_id, instructor_id, nota]
+    );
+
+    res.status(201).json({ ok: true, data: { id: r.lastID } });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al obtener stock" });
+    console.error("[INVENTARIO][POST /movimientos]", err);
+    res.status(500).json({ ok: false, error: "Error al registrar movimiento" });
   }
 });
 
-// GET /api/inventario/alertas
-router.get("/alertas", async (req, res) => {
+// ================= PRESTAMOS =================
+router.get("/prestamos", async (req, res) => {
   try {
+    const estado = s(req.query.estado);
+    const params = [];
+    let where = "WHERE 1=1";
+    if (estado) {
+      where += " AND p.estado = ?";
+      params.push(estado);
+    }
+
     const rows = await dbAll(
       `
-      SELECT
-        it.id, it.producto, it.categoria, it.unidad, it.stock_minimo, it.estado,
-        COALESCE(m.stock_actual, 0) AS stock_actual
-      FROM inventario_items it
-      LEFT JOIN (
-        SELECT
-          item_id,
-          COALESCE(SUM(
-            CASE
-              WHEN tipo='Ingreso' THEN cantidad
-              WHEN tipo='Salida' THEN -cantidad
-              WHEN tipo='Ajuste' THEN cantidad
-              ELSE 0
-            END
-          ), 0) AS stock_actual
-        FROM inventario_movimientos
-        GROUP BY item_id
-      ) m ON m.item_id = it.id
-      WHERE it.estado = 'Activo'
-        AND COALESCE(m.stock_actual, 0) <= COALESCE(it.stock_minimo, 0)
-      ORDER BY (COALESCE(it.stock_minimo, 0) - COALESCE(m.stock_actual, 0)) DESC, it.id DESC
-      `
+      SELECT 
+        p.*,
+        COALESCE(it.producto,'') AS item_producto,
+        COALESCE(i.nombre,'') AS instructor_nombre,
+        COALESCE(c.nombre,'') AS curso_nombre
+      FROM inventario_prestamos p
+      LEFT JOIN inventario_items it ON it.id = p.item_id
+      LEFT JOIN instructores i ON i.id = p.instructor_id
+      LEFT JOIN cursos c ON c.id = p.curso_id
+      ${where}
+      ORDER BY p.id DESC
+      LIMIT 1000
+      `,
+      params
     );
-    return res.json({ ok: true, data: rows });
+
+    res.json({ ok: true, items: rows });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al obtener alertas" });
+    console.error("[INVENTARIO][GET /prestamos]", err);
+    res.status(500).json({ ok: false, error: "Error al listar préstamos" });
   }
 });
 
-// GET /api/inventario/resumen
-router.get("/resumen", async (req, res) => {
+router.post("/prestamos", async (req, res) => {
   try {
-    const desde = normStr(req.query.desde);
-    const hasta = normStr(req.query.hasta);
+    const b = req.body || {};
+    const item_id = toInt(b.item_id, 0);
+    const instructor_id = toInt(b.instructor_id, 0);
+    const curso_id = toInt(b.curso_id, 0) || null;
+    const cantidad = toInt(b.cantidad, 0);
+    const fecha_salida = isoDate(b.fecha_salida);
+    const nota = s(b.nota) || null;
 
-    const d = desde || "0000-01-01";
-    const h = hasta || "9999-12-31";
+    if (!item_id) return res.status(400).json({ ok: false, error: "item_id requerido" });
+    if (!instructor_id) return res.status(400).json({ ok: false, error: "instructor_id requerido" });
+    if (cantidad <= 0) return res.status(400).json({ ok: false, error: "cantidad inválida" });
 
-    if (desde && !isISODate(desde)) return res.status(400).json({ ok: false, error: "desde inválido (YYYY-MM-DD)" });
-    if (hasta && !isISODate(hasta)) return res.status(400).json({ ok: false, error: "hasta inválido (YYYY-MM-DD)" });
+    const stock = await getStockByItemId(item_id);
+    if (stock < cantidad) return res.status(400).json({ ok: false, error: "Stock insuficiente" });
 
-    const totales = await dbGet(
+    const r = await dbRun(
       `
-      SELECT
-        COALESCE(SUM(CASE WHEN tipo='Ingreso' THEN cantidad ELSE 0 END), 0) AS total_ingresos,
-        COALESCE(SUM(CASE WHEN tipo='Salida' THEN ABS(cantidad) ELSE 0 END), 0) AS total_salidas,
-        COALESCE(SUM(CASE WHEN tipo='Salida' THEN ABS(cantidad) * COALESCE(costo_unitario,0) ELSE 0 END), 0) AS costo_salidas
-      FROM inventario_movimientos
-      WHERE fecha BETWEEN ? AND ?
+      INSERT INTO inventario_prestamos (item_id, instructor_id, curso_id, cantidad, fecha_salida, estado, nota)
+      VALUES (?, ?, ?, ?, ?, 'Pendiente', ?)
       `,
-      [d, h]
+      [item_id, instructor_id, curso_id, cantidad, fecha_salida, nota]
     );
 
-    const porCurso = await dbAll(
+    await dbRun(
       `
-      SELECT
-        m.curso_id,
-        c.nombre AS curso_nombre,
-        COALESCE(SUM(ABS(m.cantidad) * COALESCE(m.costo_unitario, 0)), 0) AS costo_total
-      FROM inventario_movimientos m
-      LEFT JOIN cursos c ON c.id = m.curso_id
-      WHERE m.fecha BETWEEN ? AND ?
-        AND m.tipo = 'Salida'
-        AND m.curso_id IS NOT NULL
-      GROUP BY m.curso_id
-      ORDER BY costo_total DESC
+      INSERT INTO inventario_movimientos (item_id, tipo, cantidad, fecha, costo_total, curso_id, instructor_id, nota)
+      VALUES (?, 'Prestamo', ?, ?, 0, ?, ?, ?)
       `,
-      [d, h]
+      [item_id, cantidad, fecha_salida, curso_id, instructor_id, `Préstamo #${r.lastID}${nota ? " — " + nota : ""}`]
     );
 
-    const porInstructor = await dbAll(
-      `
-      SELECT
-        m.instructor_id,
-        ins.nombre AS instructor_nombre,
-        COALESCE(SUM(ABS(m.cantidad) * COALESCE(m.costo_unitario, 0)), 0) AS costo_total
-      FROM inventario_movimientos m
-      LEFT JOIN instructores ins ON ins.id = m.instructor_id
-      WHERE m.fecha BETWEEN ? AND ?
-        AND m.tipo = 'Salida'
-        AND m.instructor_id IS NOT NULL
-      GROUP BY m.instructor_id
-      ORDER BY costo_total DESC
-      `,
-      [d, h]
-    );
-
-    return res.json({
-      ok: true,
-      data: {
-        desde: d,
-        hasta: h,
-        total_ingresos: Number(totales?.total_ingresos || 0),
-        total_salidas: Number(totales?.total_salidas || 0),
-        costo_salidas: Number(totales?.costo_salidas || 0),
-        costo_total_por_curso: porCurso.map((r) => ({
-          curso_id: r.curso_id,
-          curso_nombre: r.curso_nombre,
-          costo_total: Number(r.costo_total || 0),
-        })),
-        costo_total_por_instructor: porInstructor.map((r) => ({
-          instructor_id: r.instructor_id,
-          instructor_nombre: r.instructor_nombre,
-          costo_total: Number(r.costo_total || 0),
-        })),
-      },
-    });
+    res.status(201).json({ ok: true, data: { id: r.lastID } });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al obtener resumen de inventario" });
+    console.error("[INVENTARIO][POST /prestamos]", err);
+    res.status(500).json({ ok: false, error: "Error al registrar préstamo" });
+  }
+});
+
+router.post("/prestamos/:id/devolver", async (req, res) => {
+  const id = toInt(req.params.id, 0);
+  if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
+
+  try {
+    const p = await dbGet(`SELECT * FROM inventario_prestamos WHERE id = ?`, [id]);
+    if (!p) return res.status(404).json({ ok: false, error: "Préstamo no encontrado" });
+    if (String(p.estado) !== "Pendiente") return res.status(400).json({ ok: false, error: "El préstamo no está pendiente" });
+
+    const fecha_devolucion = isoDate(req.body?.fecha_devolucion);
+
+    await dbRun(`UPDATE inventario_prestamos SET estado='Devuelto', fecha_devolucion=? WHERE id=?`, [fecha_devolucion, id]);
+
+    await dbRun(
+      `
+      INSERT INTO inventario_movimientos (item_id, tipo, cantidad, fecha, costo_total, curso_id, instructor_id, nota)
+      VALUES (?, 'Devolucion', ?, ?, 0, ?, ?, ?)
+      `,
+      [p.item_id, p.cantidad, fecha_devolucion, p.curso_id || null, p.instructor_id || null, `Devolución préstamo #${id}`]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[INVENTARIO][POST /prestamos/:id/devolver]", err);
+    res.status(500).json({ ok: false, error: "Error al devolver préstamo" });
+  }
+});
+
+router.post("/prestamos/:id/cobrar", async (req, res) => {
+  const id = toInt(req.params.id, 0);
+  if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
+
+  try {
+    const p = await dbGet(`SELECT * FROM inventario_prestamos WHERE id = ?`, [id]);
+    if (!p) return res.status(404).json({ ok: false, error: "Préstamo no encontrado" });
+    if (String(p.estado) !== "Pendiente") return res.status(400).json({ ok: false, error: "El préstamo no está pendiente" });
+
+    await dbRun(`UPDATE inventario_prestamos SET estado='Cobrado' WHERE id=?`, [id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[INVENTARIO][POST /prestamos/:id/cobrar]", err);
+    res.status(500).json({ ok: false, error: "Error al marcar como cobrado" });
+  }
+});
+
+// ================= GET /api/inventario/alertas =================
+router.get("/alertas", async (req, res) => {
+  try {
+    await ensurePrecioCol();
+
+    const items = await dbAll(
+      `SELECT id, producto, categoria, unidad, stock_minimo, estado, COALESCE(precio,0) AS precio
+       FROM inventario_items
+       WHERE estado='Activo'
+       ORDER BY id DESC
+       LIMIT 500`
+    );
+
+    const out = [];
+    for (const it of items) {
+      const stock = await getStockByItemId(it.id);
+      if (stock <= toInt(it.stock_minimo, 0)) out.push({ ...it, stock });
+    }
+
+    res.json({ ok: true, items: out });
+  } catch (err) {
+    console.error("[INVENTARIO][GET /alertas]", err);
+    res.status(500).json({ ok: false, error: "Error al listar alertas" });
   }
 });
 

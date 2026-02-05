@@ -140,8 +140,8 @@ CREATE TABLE IF NOT EXISTS asistencia (
     ON DELETE CASCADE
 );
 
---CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_fecha
---ON asistencia(inscripcion_id, fecha);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_fecha
+ON asistencia(inscripcion_id, fecha);
 
 CREATE INDEX IF NOT EXISTS ix_asistencia_estado ON asistencia(estado);
 CREATE INDEX IF NOT EXISTS ix_asistencia_fecha ON asistencia(fecha);
@@ -167,7 +167,9 @@ CREATE TABLE IF NOT EXISTS pagos (
 
 
 CREATE INDEX IF NOT EXISTS ix_pagos_inscripcion ON pagos(inscripcion_id);
-CREATE INDEX IF NOT EXISTS ix_pagos_fecha ON pagos(fecha);
+DROP INDEX IF EXISTS ix_pagos_fecha;
+CREATE INDEX IF NOT EXISTS ix_pagos_fecha ON pagos(fecha_pago);
+
 CREATE INDEX IF NOT EXISTS ix_pagos_estado ON pagos(estado);
 
 -- =========================
