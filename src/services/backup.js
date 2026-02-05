@@ -17,7 +17,7 @@ try {
 function safeRequireConfig() {
   try {
     // Desde services/backup.js => services/config.js
-    return require("./config");
+    return require("../config");
   } catch (_) {
     return null;
   }

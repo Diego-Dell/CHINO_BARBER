@@ -1,5 +1,39 @@
+# ===============================
+# Node / Electron
+# ===============================
 node_modules/
 dist/
+
+# ===============================
+# Environment
+# ===============================
 .env
+
+# ===============================
+# OS junk
+# ===============================
 .DS_Store
 Thumbs.db
+
+# ===============================
+# SQLite - DATOS DEL USUARIO
+# (NO versionar, NO subir, NO empaquetar)
+# ===============================
+db/database.sqlite*
+db/*.sqlite*
+db/*-wal
+db/*-shm
+db/*-journal
+
+# ===============================
+# Backups (datos del usuario)
+# ===============================
+backups/
+
+# ===============================
+# Logs
+# ===============================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

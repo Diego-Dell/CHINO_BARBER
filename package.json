@@ -1,23 +1,59 @@
 {
   "name": "chino-barber",
-  "version": "1.0.0",
-  "main": "services/server.js",
+  "version": "1.0.1",
+  "private": true,
+  "main": "electron-main.js",
   "scripts": {
     "start": "node src/services/server.js",
-    "dev": "nodemon src/services/server.js",
-    "build": "pkg . --targets node18-win-x64 --output dist/BarberSchool.exe"
+    "dev:server": "nodemon src/services/server.js",
+    "dev": "electron .",
+    "dist": "electron-builder --win",
+    "dist:publish": "electron-builder --win --publish always"
   },
   "dependencies": {
-    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
+    "electron-log": "^5.4.3",
+    "electron-updater": "^6.7.3",
     "express": "^5.2.1",
     "express-session": "^1.18.2",
     "sqlite3": "^5.1.7",
     "systeminformation": "^5.27.13"
   },
   "devDependencies": {
-    "nodemon": "^3.1.11",
-    "pkg": "^5.8.1"
+    "electron": "^40.1.0",
+    "electron-builder": "^26.7.0",
+    "nodemon": "^3.1.11"
+  },
+  "build": {
+    "appId": "com.chino.barber",
+    "productName": "CHINO_BARBER",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron-main.js",
+      "src/**/*",
+      "services/**/*",
+      "public/**/*",
+      "db/schema.sql",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Diego-Dell",
+        "repo": "CHINO_BARBER"
+      }
+    ]
   }
 }
