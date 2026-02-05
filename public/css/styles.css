@@ -743,3 +743,116 @@ body{
 .as_empty{
   background:rgba(148,163,184,.18);
 }
+
+
+/* ========= ASISTENCIA VISUAL (solo lectura) - estilo limpio ========= */
+.asv-card {
+  background: #fff;
+  border: 1px solid #e9ecef;
+  border-radius: 14px;
+  padding: 18px;
+}
+
+.asv-topline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.asv-topline .asv-title {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.asv-topline .asv-sub {
+  color: #6c757d;
+  font-size: 13px;
+}
+
+.asv-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.asv-badge {
+  border: 1px solid #e9ecef;
+  background: #f8f9fa;
+  color: #343a40;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.asv-gridwrap {
+  overflow: auto;
+  border: 1px solid #f1f3f5;
+  border-radius: 14px;
+  padding: 14px;
+  background: #fbfcfd;
+}
+
+.asv-grid {
+  display: grid;
+  gap: 10px;
+  align-items: center;
+}
+
+.asv-hdr {
+  font-weight: 700;
+  color: #6c757d;
+  font-size: 13px;
+}
+
+.asv-hdr.date {
+  text-align: center;
+  color: #b02a37;              /* rojo suave */
+  text-decoration: underline;  /* como la img 2 */
+  text-underline-offset: 3px;
+}
+
+.asv-cellbox {
+  background: #ffffff;
+  border: 1px solid #edf0f2;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.asv-name {
+  font-weight: 700;
+  color: #212529;
+}
+
+.asv-ci {
+  color: #6c757d;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.asv-cell {
+  width: 54px;
+  height: 46px;
+  border-radius: 10px;
+  border: 1px solid #e9ecef;
+  background: #f8f9fa;
+  display: grid;
+  place-items: center;
+}
+
+.asv-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #adb5bd;
+  box-shadow: inset 0 0 0 3px rgba(0,0,0,0.06);
+}
+
+.asv-dot.ok  { background: #16a34a; }  /* asistió */
+.asv-dot.bad { background: #dc2626; }  /* faltó */
+.asv-dot.lic { background: #0284c7; }  /* licencia */
+.asv-dot.emp { background: #94a3b8; }  /* sin marcar */

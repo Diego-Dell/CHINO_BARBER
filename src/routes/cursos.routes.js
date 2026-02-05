@@ -2,7 +2,7 @@ const express = require("express");
 const db = require("../db");
 const router = express.Router();
 
-// ================= helpers =================
+// ================= helpers DB =================
 function dbRun(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
@@ -36,25 +36,26 @@ function toNum(v, def = 0) {
   return Number.isFinite(n) ? n : def;
 }
 
-// ✅ DB cursos: Programado | En curso | Finalizado | Cancelado
-function normalizeEstado(estado) {
-  const s = String(estado || "").trim();
-  if (!s) return "Programado";
-  const low = s.toLowerCase();
-
-  // tu front puede tener "Activo" => lo convertimos a Programado
-  if (low === "activo") return "Programado";
-
-  // normalizamos mayúsculas exactas
-  if (low === "programado") return "Programado";
-  if (low === "en curso" || low === "encurso") return "En curso";
-  if (low === "finalizado") return "Finalizado";
-  if (low === "cancelado") return "Cancelado";
-
-  return "Programado";
+function escStr(v) {
+  return String(v ?? "").trim();
 }
 
-// Guardamos estos 3 dentro de horario_por_dia
+// ================= esquema dinámico =================
+let _CURSOS_COLS = null;
+
+async function getCursosCols() {
+  if (_CURSOS_COLS) return _CURSOS_COLS;
+  const rows = await dbAll("PRAGMA table_info(cursos)");
+  const cols = new Set(rows.map((r) => String(r.name || "").toLowerCase()));
+  _CURSOS_COLS = cols;
+  return cols;
+}
+
+function hasCol(cols, name) {
+  return cols.has(String(name).toLowerCase());
+}
+
+// ================= horario_por_dia utils =================
 function buildHorarioPorDia({ fecha_inicio, hora_inicio, duracion }) {
   const parts = [];
   if (fecha_inicio) parts.push(`Inicio:${String(fecha_inicio).trim()}`);
@@ -80,10 +81,128 @@ function parseHorarioPorDia(hp) {
   return { fecha_inicio, hora_inicio, duracion };
 }
 
+// ================= cálculo de estado automático =================
+function parseISODate(iso) {
+  // iso: YYYY-MM-DD
+  const s = String(iso || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  if (Number.isNaN(dt.getTime())) return null;
+  // normalizado a medianoche local
+  dt.setHours(0, 0, 0, 0);
+  return dt;
+}
+
+function addDays(dt, days) {
+  const x = new Date(dt);
+  x.setDate(x.getDate() + days);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function normDiasToWeekdays(diasStr) {
+  const s = String(diasStr || "").toLowerCase();
+
+  const map = [
+    ["lunes", 1],
+    ["martes", 2],
+    ["miercoles", 3],
+    ["miércoles", 3],
+    ["jueves", 4],
+    ["viernes", 5],
+    ["sabado", 6],
+    ["sábado", 6],
+    ["domingo", 0],
+  ];
+
+  const out = new Set();
+  for (const [name, idx] of map) {
+    if (s.includes(name)) out.add(idx);
+  }
+  return Array.from(out).sort((a, b) => a - b);
+}
+
+// Devuelve la fecha (Date) de la última clase estimada, según fecha_inicio + dias + nro_clases
+function calcFechaUltimaClase({ fecha_inicio, dias, nro_clases }) {
+  const start = parseISODate(fecha_inicio);
+  const n = toInt(nro_clases, 0);
+  const weekdays = normDiasToWeekdays(dias);
+
+  if (!start || n <= 0 || weekdays.length === 0) return null;
+
+  const fechas = [];
+  let cursor = new Date(start);
+
+  // seguridad para no loop infinito
+  const LIMIT = 900;
+  let guard = 0;
+
+  while (fechas.length < n && guard < LIMIT) {
+    if (weekdays.includes(cursor.getDay())) {
+      fechas.push(new Date(cursor));
+    }
+    cursor.setDate(cursor.getDate() + 1);
+    cursor.setHours(0, 0, 0, 0);
+    guard++;
+  }
+
+  if (!fechas.length) return null;
+  return fechas[fechas.length - 1];
+}
+
+// Reglas pedidas:
+// - Cancelado: si inscritos = 0
+// - Programado: si inicia la próxima semana (<= 7 días) o en el futuro cercano
+// - Finalizado: si ya pasó la última clase estimada
+// - En curso: caso contrario (ya inició y faltan clases)
+function calcularEstadoCurso({ fecha_inicio, dias, nro_clases, inscritos }) {
+  const ins = toInt(inscritos, 0);
+  if (ins === 0) return "Cancelado";
+
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+
+  const fi = parseISODate(fecha_inicio);
+  if (!fi) {
+    // si no hay fecha válida, lo tratamos como Programado (seguro)
+    return "Programado";
+  }
+
+  const limiteProg = addDays(hoy, 7);
+  if (fi > hoy && fi <= limiteProg) return "Programado";
+  if (fi > limiteProg) return "Programado"; // sigue siendo programado si está más lejos
+
+  // Ya inició (fi <= hoy)
+  const last = calcFechaUltimaClase({ fecha_inicio, dias, nro_clases });
+  if (last) {
+    // si hoy es después del último día de clase => finalizado
+    if (hoy > last) return "Finalizado";
+  }
+
+  return "En curso";
+}
+
 // ================= GET /api/cursos =================
 router.get("/", async (req, res) => {
   try {
-    const rows = await dbAll(`
+    const cols = await getCursosCols();
+
+    // Filtro opcional por q / estado (tu front lo manda)
+    const q = escStr(req.query.q);
+    const estadoQ = escStr(req.query.estado); // Programado|En curso|Finalizado|Cancelado
+
+    // NOTA: como el estado es calculado, filtraremos "estado" en memoria luego.
+    const params = [];
+    let where = "WHERE 1=1";
+
+    if (q) {
+      where += " AND (c.nombre LIKE ?)";
+      params.push(`%${q}%`);
+    }
+
+    const rows = await dbAll(
+      `
       SELECT 
         c.*,
         COALESCE(i.nombre,'') AS instructor_nombre,
@@ -94,27 +213,57 @@ router.get("/", async (req, res) => {
         ) AS inscritos
       FROM cursos c
       LEFT JOIN instructores i ON i.id = c.instructor_id
+      ${where}
       ORDER BY c.id DESC
       LIMIT 200
-    `);
+      `,
+      params
+    );
 
     const out = rows.map((c) => {
-      const { fecha_inicio, hora_inicio, duracion } = parseHorarioPorDia(c.horario_por_dia);
+      // Sacar fecha/hora/duracion desde horario_por_dia o columnas separadas
+      let extra = { fecha_inicio: "", hora_inicio: "", duracion: 0 };
+
+      if (hasCol(cols, "horario_por_dia")) {
+        const p = parseHorarioPorDia(c.horario_por_dia);
+        extra = {
+          fecha_inicio: p.fecha_inicio || "",
+          hora_inicio: p.hora_inicio || "",
+          duracion: p.duracion ? toNum(p.duracion, 0) : 0,
+        };
+      } else {
+        // soporta columnas separadas si existen
+        extra = {
+          fecha_inicio: escStr(c.fecha_inicio || ""),
+          hora_inicio: escStr(c.hora_inicio || ""),
+          duracion: toNum(c.duracion, 0),
+        };
+      }
+
+      // calcular estado automático
+      const estadoAuto = calcularEstadoCurso({
+        fecha_inicio: extra.fecha_inicio,
+        dias: c.dias,
+        nro_clases: c.nro_clases,
+        inscritos: c.inscritos,
+      });
+
       return {
         ...c,
-        fecha_inicio,
-        hora_inicio,
-        duracion: duracion ? toNum(duracion, 0) : 0,
+        ...extra,
+        estado: estadoAuto, // 👈 sobrescribe lo que haya en BD
       };
     });
 
-    return res.json(out);
+    // filtrar por estado (calculado) si lo piden
+    const filtered = estadoQ ? out.filter((x) => String(x.estado) === estadoQ) : out;
+
+    return res.json(filtered);
   } catch (err) {
     console.error("[CURSOS][GET]", err);
     return res.status(500).json({ ok: false, error: "Error al listar cursos" });
   }
 });
-
 
 // ================= GET /api/cursos/:id =================
 router.get("/:id", async (req, res) => {
@@ -122,11 +271,18 @@ router.get("/:id", async (req, res) => {
   if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
   try {
+    const cols = await getCursosCols();
+
     const c = await dbGet(
       `
       SELECT 
         c.*,
-        i.nombre AS instructor_nombre
+        COALESCE(i.nombre,'') AS instructor_nombre,
+        (
+          SELECT COUNT(*)
+          FROM inscripciones x
+          WHERE x.curso_id = c.id AND x.estado = 'Activa'
+        ) AS inscritos
       FROM cursos c
       LEFT JOIN instructores i ON i.id = c.instructor_id
       WHERE c.id = ?
@@ -136,8 +292,38 @@ router.get("/:id", async (req, res) => {
 
     if (!c) return res.status(404).json({ ok: false, error: "Curso no encontrado" });
 
-    const extra = parseHorarioPorDia(c.horario_por_dia);
-    return res.json({ ok: true, data: { ...c, ...extra, duracion: extra.duracion ? toNum(extra.duracion, 0) : 0 } });
+    let extra = { fecha_inicio: "", hora_inicio: "", duracion: 0 };
+
+    if (hasCol(cols, "horario_por_dia")) {
+      const p = parseHorarioPorDia(c.horario_por_dia);
+      extra = {
+        fecha_inicio: p.fecha_inicio || "",
+        hora_inicio: p.hora_inicio || "",
+        duracion: p.duracion ? toNum(p.duracion, 0) : 0,
+      };
+    } else {
+      extra = {
+        fecha_inicio: escStr(c.fecha_inicio || ""),
+        hora_inicio: escStr(c.hora_inicio || ""),
+        duracion: toNum(c.duracion, 0),
+      };
+    }
+
+    const estadoAuto = calcularEstadoCurso({
+      fecha_inicio: extra.fecha_inicio,
+      dias: c.dias,
+      nro_clases: c.nro_clases,
+      inscritos: c.inscritos,
+    });
+
+    return res.json({
+      ok: true,
+      data: {
+        ...c,
+        ...extra,
+        estado: estadoAuto, // 👈 calculado
+      },
+    });
   } catch (err) {
     console.error("[CURSOS][GET/:id]", err);
     return res.status(500).json({ ok: false, error: "Error al obtener curso" });
@@ -145,24 +331,25 @@ router.get("/:id", async (req, res) => {
 });
 
 // ================= POST /api/cursos =================
-// ✅ compatible con tu front: nro_clases + cupo
+// ✅ NO acepta estado manual. Se guardará un estado base (Programado) en BD,
+//    pero el GET lo sobrescribe con estado calculado.
 router.post("/", async (req, res) => {
   try {
+    const cols = await getCursosCols();
     const b = req.body || {};
 
-    const nombre = String(b.nombre || "").trim();
+    const nombre = escStr(b.nombre);
     const instructor_id = toInt(b.instructor_id, 0);
 
-    const fecha_inicio = String(b.fecha_inicio || "").trim();
+    const fecha_inicio = escStr(b.fecha_inicio) || "";
     const nro_clases = toInt(b.nro_clases, 0);
     const cupo = toInt(b.cupo, 0);
 
-    const dias = String(b.dias || "").trim();
-    const hora_inicio = String(b.hora_inicio || "").trim();
+    const dias = escStr(b.dias);
+    const hora_inicio = escStr(b.hora_inicio);
     const duracion = toInt(b.duracion, 0);
 
     const precio = toNum(b.precio, 0);
-    const estado = normalizeEstado(b.estado);
 
     if (!nombre) return res.status(400).json({ ok: false, error: "Nombre del curso es obligatorio" });
     if (!instructor_id) return res.status(400).json({ ok: false, error: "Instructor requerido" });
@@ -172,18 +359,73 @@ router.post("/", async (req, res) => {
     if (!hora_inicio) return res.status(400).json({ ok: false, error: "Hora inicio es obligatoria" });
     if (duracion < 1) return res.status(400).json({ ok: false, error: "Duración inválida" });
 
-    const horario_por_dia = buildHorarioPorDia({ fecha_inicio, hora_inicio, duracion });
+    // Estado en BD: base (Programado). El “real” se calcula al listar.
+    const estadoBD = "Programado";
 
-    const r = await dbRun(
-      `
-      INSERT INTO cursos
-      (nombre, nivel, nro_clases, dias, horario_por_dia, precio, cupo, estado, instructor_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      [nombre, null, nro_clases, dias, horario_por_dia, precio, cupo, estado, instructor_id]
-    );
+    if (hasCol(cols, "horario_por_dia")) {
+      const horario_por_dia = buildHorarioPorDia({ fecha_inicio, hora_inicio, duracion });
 
-    return res.status(201).json({ ok: true, data: { id: r.lastID } });
+      const r = await dbRun(
+        `
+        INSERT INTO cursos
+        (nombre, nivel, nro_clases, dias, horario_por_dia, precio, cupo, estado, instructor_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [nombre, null, nro_clases, dias, horario_por_dia, precio, cupo, estadoBD, instructor_id]
+      );
+
+      return res.status(201).json({ ok: true, data: { id: r.lastID } });
+    }
+
+    // Variante con columnas separadas
+    // (si tu tabla tiene fecha_inicio/hora_inicio/duracion, esto evitará el error)
+    const fields = [];
+    const vals = [];
+
+    fields.push("nombre");
+    vals.push(nombre);
+
+    if (hasCol(cols, "nivel")) {
+      fields.push("nivel");
+      vals.push(null);
+    }
+
+    fields.push("nro_clases");
+    vals.push(nro_clases);
+
+    fields.push("dias");
+    vals.push(dias);
+
+    if (hasCol(cols, "fecha_inicio")) {
+      fields.push("fecha_inicio");
+      vals.push(fecha_inicio || null);
+    }
+    if (hasCol(cols, "hora_inicio")) {
+      fields.push("hora_inicio");
+      vals.push(hora_inicio || null);
+    }
+    if (hasCol(cols, "duracion")) {
+      fields.push("duracion");
+      vals.push(duracion);
+    }
+
+    fields.push("precio");
+    vals.push(precio);
+
+    fields.push("cupo");
+    vals.push(cupo);
+
+    fields.push("estado");
+    vals.push(estadoBD);
+
+    fields.push("instructor_id");
+    vals.push(instructor_id);
+
+    const placeholders = fields.map(() => "?").join(", ");
+    const sql = `INSERT INTO cursos (${fields.join(", ")}) VALUES (${placeholders})`;
+
+    const r2 = await dbRun(sql, vals);
+    return res.status(201).json({ ok: true, data: { id: r2.lastID } });
   } catch (err) {
     console.error("[CURSOS][POST]", err);
     return res.status(500).json({ ok: false, error: "Error al crear curso" });
@@ -191,50 +433,96 @@ router.post("/", async (req, res) => {
 });
 
 // ================= PUT /api/cursos/:id =================
-// ✅ compatible con tu front: nro_clases + cupo
+// ✅ NO permite editar estado manual. Solo actualiza datos del curso.
 router.put("/:id", async (req, res) => {
   const id = toInt(req.params.id, 0);
   if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
   try {
+    const cols = await getCursosCols();
     const b = req.body || {};
 
-    const nombre = String(b.nombre || "").trim();
+    const nombre = escStr(b.nombre);
     const instructor_id = toInt(b.instructor_id, 0);
 
-    const fecha_inicio = String(b.fecha_inicio || "").trim();
+    const fecha_inicio = escStr(b.fecha_inicio) || "";
     const nro_clases = toInt(b.nro_clases, 0);
     const cupo = toInt(b.cupo, 0);
 
-    const dias = String(b.dias || "").trim();
-    const hora_inicio = String(b.hora_inicio || "").trim();
+    const dias = escStr(b.dias);
+    const hora_inicio = escStr(b.hora_inicio);
     const duracion = toInt(b.duracion, 0);
 
     const precio = toNum(b.precio, 0);
-    const estado = normalizeEstado(b.estado);
 
     if (!nombre) return res.status(400).json({ ok: false, error: "Nombre del curso es obligatorio" });
     if (!instructor_id) return res.status(400).json({ ok: false, error: "Instructor requerido" });
     if (nro_clases < 1) return res.status(400).json({ ok: false, error: "nro_clases inválido" });
     if (cupo < 1) return res.status(400).json({ ok: false, error: "cupo inválido" });
+    if (!dias) return res.status(400).json({ ok: false, error: "Días es obligatorio" });
+    if (!hora_inicio) return res.status(400).json({ ok: false, error: "Hora inicio es obligatoria" });
+    if (duracion < 1) return res.status(400).json({ ok: false, error: "Duración inválida" });
 
-    const horario_por_dia = buildHorarioPorDia({ fecha_inicio, hora_inicio, duracion });
+    if (hasCol(cols, "horario_por_dia")) {
+      const horario_por_dia = buildHorarioPorDia({ fecha_inicio, hora_inicio, duracion });
 
-    await dbRun(
-      `
-      UPDATE cursos
-      SET nombre = ?,
-          nro_clases = ?,
-          dias = ?,
-          horario_por_dia = ?,
-          precio = ?,
-          cupo = ?,
-          estado = ?,
-          instructor_id = ?
-      WHERE id = ?
-      `,
-      [nombre, nro_clases, dias || null, horario_por_dia || null, precio, cupo, estado, instructor_id, id]
-    );
+      await dbRun(
+        `
+        UPDATE cursos
+        SET nombre = ?,
+            nro_clases = ?,
+            dias = ?,
+            horario_por_dia = ?,
+            precio = ?,
+            cupo = ?,
+            instructor_id = ?
+        WHERE id = ?
+        `,
+        [nombre, nro_clases, dias || null, horario_por_dia || null, precio, cupo, instructor_id, id]
+      );
+
+      return res.json({ ok: true });
+    }
+
+    // Variante con columnas separadas: armamos UPDATE dinámico solo con columnas que existen
+    const sets = [];
+    const vals = [];
+
+    sets.push("nombre = ?");
+    vals.push(nombre);
+
+    sets.push("nro_clases = ?");
+    vals.push(nro_clases);
+
+    sets.push("dias = ?");
+    vals.push(dias || null);
+
+    if (hasCol(cols, "fecha_inicio")) {
+      sets.push("fecha_inicio = ?");
+      vals.push(fecha_inicio || null);
+    }
+    if (hasCol(cols, "hora_inicio")) {
+      sets.push("hora_inicio = ?");
+      vals.push(hora_inicio || null);
+    }
+    if (hasCol(cols, "duracion")) {
+      sets.push("duracion = ?");
+      vals.push(duracion);
+    }
+
+    sets.push("precio = ?");
+    vals.push(precio);
+
+    sets.push("cupo = ?");
+    vals.push(cupo);
+
+    sets.push("instructor_id = ?");
+    vals.push(instructor_id);
+
+    vals.push(id);
+
+    const sql = `UPDATE cursos SET ${sets.join(", ")} WHERE id = ?`;
+    await dbRun(sql, vals);
 
     return res.json({ ok: true });
   } catch (err) {

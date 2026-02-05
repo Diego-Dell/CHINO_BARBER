@@ -49,6 +49,89 @@ function getAsync(sql, params = []) {
   });
 }
 
+function toInt(v, def = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : def;
+}
+
+// ===============================
+// Utils para calcular fechas de clases (según curso)
+// ===============================
+function parseHorarioPorDia(hp) {
+  const txt = String(hp || "");
+  const parts = txt.split("|").map((s) => s.trim());
+
+  let fecha_inicio = "";
+  let hora_inicio = "";
+  let duracion = "";
+
+  for (const p of parts) {
+    if (p.startsWith("Inicio:")) fecha_inicio = p.replace("Inicio:", "").trim();
+    if (p.startsWith("Hora:")) hora_inicio = p.replace("Hora:", "").trim();
+    if (p.startsWith("Dur:")) duracion = p.replace("Dur:", "").trim();
+  }
+  return { fecha_inicio, hora_inicio, duracion };
+}
+
+function parseISO(d) {
+  const s = String(d || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, day] = s.split("-").map(Number);
+  const dt = new Date(y, m - 1, day);
+  if (Number.isNaN(dt.getTime())) return null;
+  dt.setHours(0, 0, 0, 0);
+  return dt;
+}
+
+function toISODate(dt) {
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function normDiasToWeekdays(diasStr) {
+  const s = String(diasStr || "").toLowerCase();
+  const map = [
+    ["lunes", 1],
+    ["martes", 2],
+    ["miercoles", 3],
+    ["miércoles", 3],
+    ["jueves", 4],
+    ["viernes", 5],
+    ["sabado", 6],
+    ["sábado", 6],
+    ["domingo", 0],
+  ];
+  const out = new Set();
+  for (const [name, idx] of map) if (s.includes(name)) out.add(idx);
+  return Array.from(out).sort((a, b) => a - b);
+}
+
+// Genera las N fechas de clase según inicio + dias + nro_clases
+function buildFechasClases({ fecha_inicio, dias, nro_clases }) {
+  const start = parseISO(fecha_inicio);
+  const n = toInt(nro_clases, 0);
+  const weekdays = normDiasToWeekdays(dias);
+
+  if (!start || n <= 0 || weekdays.length === 0) return [];
+
+  const fechas = [];
+  let cursor = new Date(start);
+
+  // seguridad
+  const LIMIT = 900;
+  let guard = 0;
+
+  while (fechas.length < n && guard < LIMIT) {
+    if (weekdays.includes(cursor.getDay())) fechas.push(toISODate(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+    cursor.setHours(0, 0, 0, 0);
+    guard++;
+  }
+  return fechas;
+}
+
 // ===============================
 // GET /api/asistencia?curso_id=1&fecha=YYYY-MM-DD
 // Devuelve asistencia de un día para un curso
@@ -172,7 +255,6 @@ router.post("/bulk", (req, res) => {
         }
       };
 
-      // Ejecuta update y si no cambia nada, hace insert
       for (const it of items) {
         const insc = Number(it.inscripcion_id ?? it.inscripcionId ?? 0);
         const f = String(it.fecha || "").slice(0, 10);
@@ -189,7 +271,6 @@ router.post("/bulk", (req, res) => {
             return done(null);
           }
 
-          // no existía => insert
           stmtInsert.run([insc, f, est, obs], (err2) => done(err2));
         });
       }
@@ -240,6 +321,130 @@ router.get("/resumen", async (req, res) => {
     const rows = await allAsync(sql, [curso_id]);
     return res.json(rows);
   } catch (err) {
+    return bad(res, err.message || "Error", 500);
+  }
+});
+
+// ======================================================
+// ✅ NUEVO: GET /api/asistencia/curso/:cursoId/resumen
+// (Lo que tu cursos.js llama)
+// Devuelve:
+// { ok: true, curso: {...}, fechas:[...], alumnos:[{..., asistencia:{[fecha]:{estado}}}] }
+// ======================================================
+router.get("/curso/:cursoId/resumen", async (req, res) => {
+  try {
+    const cursoId = toInt(req.params.cursoId, 0);
+    if (!cursoId) return bad(res, "cursoId inválido");
+
+    // 1) Curso + instructor
+    const curso = await getAsync(
+      `
+      SELECT 
+        c.*,
+        COALESCE(i.nombre,'') AS instructor_nombre
+      FROM cursos c
+      LEFT JOIN instructores i ON i.id = c.instructor_id
+      WHERE c.id = ?
+      `,
+      [cursoId]
+    );
+    if (!curso) return bad(res, "Curso no encontrado", 404);
+
+    // 2) obtener fecha_inicio (desde horario_por_dia si existe)
+    let fecha_inicio = String(curso.fecha_inicio || "").slice(0, 10);
+    if (!fecha_inicio) {
+      const p = parseHorarioPorDia(curso.horario_por_dia);
+      fecha_inicio = String(p.fecha_inicio || "").slice(0, 10);
+    }
+
+    const nro_clases = toInt(curso.nro_clases, 0);
+    const dias = String(curso.dias || "");
+
+    const fechas = buildFechasClases({ fecha_inicio, dias, nro_clases });
+
+    // 3) Alumnos inscritos (Activos)
+    const alumnos = await allAsync(
+      `
+      SELECT
+        i.id AS inscripcion_id,
+        al.nombre AS alumno_nombre,
+        al.documento AS alumno_documento
+      FROM inscripciones i
+      JOIN alumnos al ON al.id = i.alumno_id
+      WHERE i.curso_id = ? AND i.estado = 'Activa'
+      ORDER BY al.nombre ASC
+      `,
+      [cursoId]
+    );
+
+    // Si no hay nada, responde igual con estructura válida
+    if (!fechas.length || !alumnos.length) {
+      return res.json({
+        ok: true,
+        curso: {
+          id: curso.id,
+          nombre: curso.nombre,
+          instructor_nombre: curso.instructor_nombre || "",
+          fecha_inicio,
+          dias,
+          nro_clases,
+        },
+        fechas,
+        alumnos: alumnos.map((a) => ({
+          ...a,
+          asistencia: {},
+        })),
+      });
+    }
+
+    // 4) Traer asistencias de esas inscripciones (solo fechas del curso)
+    const inscIds = alumnos.map((a) => Number(a.inscripcion_id)).filter(Boolean);
+    const placeholders = inscIds.map(() => "?").join(",");
+
+    // (filtrar por rango de fechas del curso para no traer de más)
+    const minF = fechas[0];
+    const maxF = fechas[fechas.length - 1];
+
+    const asistRows = await allAsync(
+      `
+      SELECT inscripcion_id, fecha, estado
+      FROM asistencia
+      WHERE inscripcion_id IN (${placeholders})
+        AND fecha >= ? AND fecha <= ?
+      `,
+      [...inscIds, minF, maxF]
+    );
+
+    // 5) Armar mapa asistencia por alumno
+    const mapa = new Map(); // inscId -> {fecha: {estado}}
+    for (const r of asistRows) {
+      const iid = Number(r.inscripcion_id);
+      const f = String(r.fecha || "").slice(0, 10);
+      if (!iid || !f) continue;
+      if (!mapa.has(iid)) mapa.set(iid, {});
+      mapa.get(iid)[f] = { estado: r.estado };
+    }
+
+    const outAlumnos = alumnos.map((a) => ({
+      ...a,
+      asistencia: mapa.get(Number(a.inscripcion_id)) || {},
+    }));
+
+    return res.json({
+      ok: true,
+      curso: {
+        id: curso.id,
+        nombre: curso.nombre,
+        instructor_nombre: curso.instructor_nombre || "",
+        fecha_inicio,
+        dias,
+        nro_clases,
+      },
+      fechas,
+      alumnos: outAlumnos,
+    });
+  } catch (err) {
+    console.error("[ASISTENCIA][curso/:id/resumen]", err);
     return bad(res, err.message || "Error", 500);
   }
 });
