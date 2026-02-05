@@ -1,6 +1,6 @@
 {
   "name": "chino-barber",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "main": "electron-main.js",
   "scripts": {
@@ -29,6 +29,7 @@
   "build": {
     "appId": "com.chino.barber",
     "productName": "CHINO_BARBER",
+    "artifactName": "${productName}-Setup-${version}.${ext}",
     "directories": {
       "output": "dist"
     },
@@ -38,10 +39,16 @@
       "services/**/*",
       "public/**/*",
       "db/schema.sql",
-      "package.json"
+      "package.json",
+      "assets/**/*"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/sqlite3/**"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "assets/icon.ico"
     },
     "nsis": {
       "oneClick": false,
