@@ -1,3 +1,4 @@
+// electron-main.js
 const { app, BrowserWindow, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -5,14 +6,15 @@ const http = require("http");
 const { spawn } = require("child_process");
 
 const log = require("electron-log");
-const { autoUpdater } = require("electron-updater");
+let autoUpdater = null;
+try {
+  ({ autoUpdater } = require("electron-updater"));
+  autoUpdater.logger = log;
+} catch (_) {
+  // en dev puede no estar
+}
 
 log.transports.file.level = "info";
-autoUpdater.logger = log;
-
-// ✅ IMPORTANTE
-autoUpdater.autoDownload = true;
-autoUpdater.autoInstallOnAppQuit = true;
 
 let mainWindow = null;
 let serverProcess = null;
@@ -21,15 +23,22 @@ const userData = app.getPath("userData");
 const DB_DIR = path.join(userData, "db");
 const LOG_DIR = path.join(userData, "logs");
 
-process.env.DB_DIR = DB_DIR;
-process.env.DB_PATH = path.join(DB_DIR, "database.sqlite");
-process.env.APP_USER_DATA = userData;          // ✅ para server-port.txt
-process.env.NODE_ENV = "production";
-
 fs.mkdirSync(DB_DIR, { recursive: true });
 fs.mkdirSync(LOG_DIR, { recursive: true });
 
-function httpGet(url, timeoutMs = 1000) {
+// ✅ ENV (igual que el simple + completo)
+process.env.APP_USER_DATA = userData;
+process.env.DB_DIR = DB_DIR;
+process.env.DB_PATH = path.join(DB_DIR, "database.sqlite");
+process.env.NODE_ENV = "production";
+
+// ✅ si quieres puerto fijo como el que te funciona, pon 3000.
+// ✅ si quieres puerto libre, usa 0 PERO tu server debe escribir server-port.txt
+// Recomendación: dev=3000 / packaged=0
+if (!app.isPackaged) process.env.PORT = "3000";
+else process.env.PORT = process.env.PORT || "0";
+
+function httpGet(url, timeoutMs = 1200) {
   return new Promise((resolve, reject) => {
     const req = http.get(url, (res) => {
       let data = "";
@@ -41,57 +50,15 @@ function httpGet(url, timeoutMs = 1000) {
   });
 }
 
-function getServerPort() {
-  // si usas puerto fijo 3000, dejalo fijo
-  // si usas dinámico, leemos server-port.txt
-  const portFile = path.join(userData, "server-port.txt");
-  try {
-    if (fs.existsSync(portFile)) {
-      const p = Number(String(fs.readFileSync(portFile, "utf8")).trim());
-      if (p > 0) return p;
-    }
-  } catch (_) {}
-  return 3000; // fallback
-}
-
-function startServer() {
-  return new Promise((resolve, reject) => {
-    try {
-      const serverPath = app.isPackaged
-        ? path.join(process.resourcesPath, "app.asar", "services", "server.js")
-        : path.join(__dirname, "services", "server.js");
-
-      log.info("Starting server:", serverPath);
-
-      serverProcess = spawn(process.execPath, [serverPath], {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: process.env,
-        windowsHide: true,
-      });
-
-      serverProcess.stdout.on("data", (d) => log.info("[SERVER]", d.toString()));
-      serverProcess.stderr.on("data", (d) => log.error("[SERVER ERROR]", d.toString()));
-
-      serverProcess.on("error", (err) => {
-        log.error("Server spawn error:", err);
-        reject(err);
-      });
-
-      resolve();
-    } catch (err) {
-      reject(err);
-    }
-  });
-}
-
-async function waitForServer(timeoutMs = 20000) {
+async function waitForHealth(baseUrl, timeoutMs = 20000) {
   const start = Date.now();
+  const url = `${baseUrl}/health`;
+
   while (Date.now() - start < timeoutMs) {
     try {
-      const port = getServerPort();
-      const HEALTH_URL = `http://localhost:${port}/health`;
-      const res = await httpGet(HEALTH_URL, 1200);
+      const res = await httpGet(url, 1200);
       if (res.status === 200) {
+        // si responde ok o aunque no sea json, ya está arriba
         try {
           const json = JSON.parse(res.data || "{}");
           if (json.ok) return true;
@@ -100,102 +67,156 @@ async function waitForServer(timeoutMs = 20000) {
         }
       }
     } catch (_) {}
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 350));
   }
-  throw new Error("Server did not respond in time");
+  throw new Error(`Server no respondió /health: ${url}`);
 }
 
-function createWindow() {
+async function waitForPortFile(timeoutMs = 20000) {
+  const portFile = path.join(userData, "server-port.txt");
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      if (fs.existsSync(portFile)) {
+        const p = Number(fs.readFileSync(portFile, "utf8").trim());
+        if (Number.isFinite(p) && p > 0) return p;
+      }
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return null; // 👈 en vez de tirar error, devolvemos null y hacemos fallback
+}
+
+function createWindow(baseUrl) {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     show: false,
     autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true },
+    webPreferences: {
+      contextIsolation: true,
+    },
   });
 
-  const port = getServerPort();
-  mainWindow.loadURL(`http://localhost:${port}`);
+  mainWindow.loadURL(baseUrl);
   mainWindow.once("ready-to-show", () => mainWindow.show());
 }
 
-// =====================
-// ✅ UPDATE OBLIGATORIO
-// =====================
-function setupAutoUpdateMandatory() {
-  autoUpdater.on("error", (err) => {
-    log.error("Updater error:", err);
-    // si falla el update, podés dejar entrar o cortar.
-    // Para obligatorio estricto:
-    // dialog.showErrorBox("Actualización", "No se pudo verificar actualización. Intenta más tarde.");
-    // app.quit();
-  });
+function startServerSameProcess() {
+  // ✅ Esto es lo que te funciona (rutas OK, sin asar/spawn problemas)
+  log.info("Starting server via require('./services/server') (same process)");
+  require("./services/server");
+}
 
-  autoUpdater.on("update-available", async () => {
-    log.info("Update available - mandatory");
-    const r = dialog.showMessageBoxSync({
-      type: "info",
-      buttons: ["Aceptar"],
-      defaultId: 0,
-      title: "Actualización obligatoria",
-      message: "Hay una nueva versión disponible.",
-      detail: "Se descargará e instalará automáticamente. La app se reiniciará.",
-    });
-    // no hay “cancelar”, es obligatorio
-  });
+function startServerSpawned() {
+  return new Promise((resolve, reject) => {
+    try {
+      // ✅ IMPORTANTE: ejecutar desde asar suele fallar.
+      // preferir app.asar.unpacked si lo dejaste unpacked
+      const serverPath = app.isPackaged
+        ? path.join(process.resourcesPath, "app.asar.unpacked", "services", "server.js")
+        : path.join(__dirname, "services", "server.js");
 
-  autoUpdater.on("download-progress", (p) => {
-    log.info(`Download ${p.percent}%`);
-  });
+      log.info("Starting server (spawn):", serverPath);
 
-  autoUpdater.on("update-downloaded", async () => {
-    log.info("Update downloaded - installing");
-    dialog.showMessageBoxSync({
-      type: "info",
-      buttons: ["Reiniciar ahora"],
-      defaultId: 0,
-      title: "Actualización lista",
-      message: "La actualización está lista.",
-      detail: "Se reiniciará para instalarla.",
-    });
+      serverProcess = spawn(process.execPath, [serverPath], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: process.env,
+        windowsHide: true,
+      });
 
-    // ✅ instala y reinicia
-    setImmediate(() => autoUpdater.quitAndInstall(true, true));
+      serverProcess.stdout.on("data", (d) => log.info("[SERVER]", d.toString()));
+      serverProcess.stderr.on("data", (d) => log.error("[SERVER ERR]", d.toString()));
+
+      serverProcess.on("error", (err) => reject(err));
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 
-// =====================
-// START
-// =====================
+async function checkForcedUpdate() {
+  if (!autoUpdater) return;
+
+  autoUpdater.autoDownload = true;
+
+  autoUpdater.on("update-available", () => {
+    dialog.showMessageBoxSync({
+      type: "info",
+      buttons: ["OK"],
+      title: "Actualización obligatoria",
+      message: "Hay una nueva actualización obligatoria. Se descargará ahora.",
+    });
+  });
+
+  autoUpdater.on("update-downloaded", () => {
+    dialog.showMessageBoxSync({
+      type: "info",
+      buttons: ["Reiniciar ahora"],
+      title: "Actualización lista",
+      message: "Actualización descargada. La app se reiniciará para instalarla.",
+    });
+    autoUpdater.quitAndInstall();
+  });
+
+  await autoUpdater.checkForUpdates();
+}
+
 app.whenReady().then(async () => {
   try {
-    setupAutoUpdateMandatory();
+    // ✅ DEV: lo más estable para rutas (como tu simple)
+    if (!app.isPackaged) {
+      startServerSameProcess(); // server en mismo proceso
+      const baseUrl = "http://localhost:3000";
+      // opcional: esperar health si existe
+      try { await waitForHealth(baseUrl, 8000); } catch (_) {}
+      createWindow(baseUrl);
+      return;
+    }
 
-    // 1) Verifica update al abrir (ANTES de abrir tu app)
-    // si querés que sea súper estricto:
-    // - si hay update, se descargará y reiniciará, y tu app ni siquiera se abre
-    await autoUpdater.checkForUpdates();
+    // ✅ PACKAGED:
+    // Opción A (recomendada): server same-process (evita drama asar)
+    // Si tu server es liviano, usa esto:
+    startServerSameProcess();
 
-    // 2) Arranca backend y UI
-    await startServer();
-    await waitForServer();
-    createWindow();
+    // Si REALMENTE quieres spawn en packaged, comenta arriba y descomenta esto:
+    // await startServerSpawned();
+
+    // ✅ BaseUrl en packaged:
+    // - si PORT=3000 => fijo
+    // - si PORT=0 => usa server-port.txt si existe, si no, fallback 3000
+    let port = null;
+
+    if (process.env.PORT && process.env.PORT !== "0") {
+      port = Number(process.env.PORT);
+    } else {
+      port = await waitForPortFile(20000);
+    }
+
+    const baseUrl = `http://localhost:${port || 3000}`;
+
+    await waitForHealth(baseUrl, 20000);
+    createWindow(baseUrl);
+
+    await checkForcedUpdate();
   } catch (err) {
     log.error("Startup error:", err);
 
     dialog.showErrorBox(
       "No se pudo iniciar el sistema",
-      "El servidor local no respondió.\n\nRevisa estos logs:\n" +
-        `${LOG_DIR}\\main.log\n${LOG_DIR}\\server.out.log\n${LOG_DIR}\\server.err.log\n`
+      "El servidor local no respondió.\n\n" +
+        "Revisa estos logs:\n" +
+        `${LOG_DIR}\\main.log\n`
     );
+
     app.quit();
   }
 });
 
 app.on("before-quit", () => {
-  try {
-    if (serverProcess) serverProcess.kill();
-  } catch (_) {}
+  try { if (serverProcess) serverProcess.kill(); } catch (_) {}
 });
 
 app.on("window-all-closed", () => {
