@@ -171,4 +171,40 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+
+// ===============================
+// RESET PLAN DE CUOTAS (borra pagos de una inscripción)
+// POST /api/pagos/reset-plan { inscripcion_id }
+// ===============================
+router.post("/reset-plan", async (req, res) => {
+  try {
+    const inscripcion_id = toNum(req.body?.inscripcion_id, 0);
+    if (!inscripcion_id) {
+      return res.status(400).json({ ok: false, error: "inscripcion_id requerido" });
+    }
+
+    // Transacción: borrar todos los pagos ligados a la inscripción
+    db.serialize(() => {
+      db.run("BEGIN IMMEDIATE");
+      db.run(
+        `DELETE FROM pagos WHERE inscripcion_id = ?`,
+        [inscripcion_id],
+        function (err) {
+          if (err) {
+            db.run("ROLLBACK");
+            console.error("[/api/pagos/reset-plan] DELETE error:", err);
+            return res.status(500).json({ ok: false, error: err.message || "Error" });
+          }
+          const changes = this.changes || 0;
+          db.run("COMMIT");
+          return res.json({ ok: true, changes });
+        }
+      );
+    });
+  } catch (err) {
+    console.error("[/api/pagos/reset-plan] error:", err);
+    return res.status(500).json({ ok: false, error: err.message || "Error" });
+  }
+});
+
 module.exports = router;

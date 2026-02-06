@@ -40,6 +40,11 @@
 
   // ================= estado global =================
   let cursosCache = [];
+  let deudoresCache = [];
+  let cursoPagadoCompleto = false;
+  let saldoCursoActual = null;
+  let openingFromDeudores = false;
+
   let alumnosCache = [];
 
   let cuotasModelo = []; // [{nro, monto}]
@@ -54,6 +59,55 @@
   let selectedAlumnoNombre = "";
 
   let prevNroCuotas = null;
+
+function resetCuotasState() {
+  cuotasModelo = [];
+  cuotaFechas = [];
+  cuotaSeleccionada = null;
+
+  pagosPorCuota = new Map();
+  pagoSeleccionado = null;
+
+  prevNroCuotas = 1;
+
+  if (pgCuotasList) pgCuotasList.innerHTML = "";
+  if (pgTotalPagado) pgTotalPagado.textContent = "0";
+  if (pgSaldo) pgSaldo.textContent = "0";
+}
+
+function resetPagoModalState({ keepCurso = false, keepAlumno = false } = {}) {
+  // Curso
+  if (!keepCurso) {
+    if (pgCursoId) pgCursoId.value = "";
+  }
+
+  // Cuotas
+  resetCuotasState();
+  if (pgNroCuotas) {
+    pgNroCuotas.value = "1";
+    pgNroCuotas.disabled = false;
+  }
+
+  // Alumno
+  if (!keepAlumno) {
+    if (pgDocumento) pgDocumento.value = "";
+    if (pgAlumno) pgAlumno.value = "";
+    clearAlumnoUI();
+  }
+
+  // Otros
+  if (pgObs) pgObs.value = "";
+  if (msgPago) {
+    msgPago.textContent = "";
+    msgPago.className = "text-muted";
+  }
+
+  cursoPagadoCompleto = false;
+  saldoCursoActual = null;
+  if (btnGuardarPago) btnGuardarPago.disabled = false;
+}
+
+
 
   // ================= ELEMENTOS (FILTROS) =================
   const btnFiltrarPagos = document.getElementById("btnFiltrarPagos");
@@ -101,6 +155,26 @@
   async function apiGetAlumnos() {
     const data = await fetchJSON("/api/alumnos");
     return Array.isArray(data) ? data : [];
+  }
+
+
+  // Deudores por curso (solo alumnos con saldo > 0)
+  async function apiGetDeudores({ curso_id, q = "" } = {}) {
+    const p = new URLSearchParams();
+    if (curso_id) p.append("curso_id", String(curso_id));
+    if (q) p.append("q", String(q));
+    const data = await fetchJSON(`/api/reportes/deudores?${p.toString()}`);
+    // backend retorna { ok:true, data:[...] }
+    return Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+  }
+
+  // Reset plan de cuotas: borra pagos de una inscripción (cuando el usuario confirma cambio de nro cuotas)
+  async function apiResetPlan(inscripcion_id) {
+    return fetchJSON("/api/pagos/reset-plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inscripcion_id }),
+    });
   }
 
   async function apiGetAlumnoByDocumento(doc) {
@@ -203,6 +277,16 @@ async function getInscripcionIdRequired(alumno_id, curso_id) {
     selectedAlumnoId = "";
     selectedAlumnoDocumento = "";
     selectedAlumnoNombre = "";
+
+    // ✅ clave: si cambia alumno, no deben quedar cuotas anteriores
+    resetCuotasState();
+    if (pgNroCuotas) {
+      pgNroCuotas.value = "1";
+      pgNroCuotas.disabled = false;
+    }
+    if (btnGuardarPago) btnGuardarPago.disabled = false;
+    cursoPagadoCompleto = false;
+    saldoCursoActual = null;
   }
 
   function splitDias(diasStr) {
@@ -325,38 +409,52 @@ async function getInscripcionIdRequired(alumno_id, curso_id) {
     }
   }
 
+  
   function fillAlumnosList(list) {
     if (!pgAlumnosList) return;
 
-    if (!list.length) {
-      pgAlumnosList.innerHTML = `<div class="text-muted small p-2">No hay alumnos cargados.</div>`;
+    if (!Array.isArray(list) || !list.length) {
+      pgAlumnosList.innerHTML = `<div class="text-muted small p-2">No hay alumnos con deuda para este curso.</div>`;
       return;
     }
 
     pgAlumnosList.innerHTML = list
       .slice(0, 300)
-      .map(
-        (a) => `
-      <button type="button" class="list-group-item list-group-item-action" data-id="${esc(a.id)}">
-        <div class="d-flex justify-content-between">
-          <div class="fw-semibold">${esc(a.nombre)}</div>
-          <div class="text-muted">${esc(a.documento || "")}</div>
+      .map((row) => {
+        // row puede venir desde deudores (con monto_adeudado/inscripcion_id) o desde alumnosCache
+        const alumnoId = row.alumno_id ?? row.id;
+        const nombre = row.alumno_nombre ?? row.nombre ?? "";
+        const documento = row.alumno_documento ?? row.documento ?? "";
+        const deuda = Number(row.monto_adeudado ?? row.deuda ?? NaN);
+
+        const right = Number.isFinite(deuda)
+          ? `<span class="badge text-bg-warning">Debe: ${bs(deuda)}</span>`
+          : `<span class="text-muted">${esc(documento)}</span>`;
+
+        return `
+      <button type="button" class="list-group-item list-group-item-action" 
+              data-id="${esc(alumnoId)}" 
+              data-ins="${esc(row.inscripcion_id ?? "")}">
+        <div class="d-flex justify-content-between align-items-center gap-2">
+          <div class="fw-semibold text-truncate">${esc(nombre)}</div>
+          <div class="text-nowrap">${right}</div>
         </div>
+        <div class="small text-muted">${esc(documento)}</div>
       </button>
-    `
-      )
+    `;
+      })
       .join("");
 
     pgAlumnosList.querySelectorAll("button[data-id]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const id = btn.getAttribute("data-id");
-        const a = alumnosCache.find((x) => String(x.id) === String(id));
+        const a = alumnosCache.find((x) => String(x.id) === String(id)) || null;
         if (a) {
           setAlumnoUI(a);
           await refreshPagosPorCuota();
           renderCuotas();
           if (msgPago) {
-            msgPago.textContent = `Alumno seleccionado: ${a.nombre}`;
+            msgPago.textContent = "Alumno seleccionado ✔";
             msgPago.className = "text-muted";
           }
         }
@@ -364,8 +462,56 @@ async function getInscripcionIdRequired(alumno_id, curso_id) {
     });
   }
 
-  // ================= PAGOS POR CUOTA =================
-  async function refreshPagosPorCuota() {
+  async function refreshDeudoresList({ q = "" } = {}) {
+    const cursoId = normStr(pgCursoId?.value);
+    if (!cursoId) {
+      deudoresCache = [];
+      fillAlumnosList([]);
+      return;
+    }
+    try {
+      const rows = await apiGetDeudores({ curso_id: cursoId, q });
+      deudoresCache = Array.isArray(rows) ? rows : [];
+      fillAlumnosList(deudoresCache);
+    } catch (e) {
+      console.error(e);
+      deudoresCache = [];
+      if (pgAlumnosList) {
+        pgAlumnosList.innerHTML = `<div class="text-danger small p-2">Error cargando alumnos con deuda.</div>`;
+      }
+    }
+  }
+
+  function totalPagadoCursoActual() {
+    const rows = Array.from(pagosPorCuota?.values?.() || []);
+    return rows.reduce((acc, r) => acc + Number(r?.monto || 0), 0);
+  }
+
+  function applyCursoPagadoUI({ totalPagado = 0, totalCurso = 0 } = {}) {
+    const saldo = Math.max(0, Number(totalCurso || 0) - Number(totalPagado || 0));
+    saldoCursoActual = saldo;
+    cursoPagadoCompleto = saldo <= 0 && totalCurso > 0;
+
+    if (pgTotalPagado) pgTotalPagado.textContent = bs(totalPagado);
+    if (pgSaldo) pgSaldo.textContent = bs(saldo);
+
+    if (cursoPagadoCompleto) {
+      if (msgPago) {
+        msgPago.textContent = "Este alumno no tiene deuda en este curso. Curso pagado completo.";
+        msgPago.className = "text-muted";
+      }
+      if (pgNroCuotas) {
+        pgNroCuotas.value = "1";
+        pgNroCuotas.disabled = true;
+      }
+      if (btnGuardarPago) btnGuardarPago.disabled = true;
+    } else {
+      if (pgNroCuotas) pgNroCuotas.disabled = false;
+      if (btnGuardarPago) btnGuardarPago.disabled = false;
+    }
+  }
+
+async function refreshPagosPorCuota() {
     pagosPorCuota = new Map();
     pagoSeleccionado = null;
     if (btnGuardarPago) btnGuardarPago.disabled = false;
@@ -385,6 +531,12 @@ async function getInscripcionIdRequired(alumno_id, curso_id) {
       (r) => normStr(r.alumno_documento) === doc && String(r.curso_id) === String(cursoId)
     );
 
+    const curso = getCursoSel();
+    const totalCurso = Number(curso?.precio || 0);
+    const totalPagado = filtrados
+      .filter(r => String(r.estado || '').toLowerCase() === 'pagado')
+      .reduce((acc, r) => acc + Number(r.monto || 0), 0);
+
     for (const r of filtrados) {
       const nro = parseCuotaNroFromObs(r.observaciones);
       if (!nro) continue;
@@ -397,6 +549,8 @@ async function getInscripcionIdRequired(alumno_id, curso_id) {
         if (b > a) pagosPorCuota.set(nro, r);
       }
     }
+    applyCursoPagadoUI({ totalPagado, totalCurso });
+
   }
 
   // ================= CUOTAS =================
@@ -623,22 +777,63 @@ async function getInscripcionIdRequired(alumno_id, curso_id) {
 
   // ================= EVENTOS (MODAL) =================
   pgCursoId?.addEventListener("change", async () => {
+    // ✅ al cambiar curso, resetea plan de cuotas y recarga deudores del curso
+    if (pgNroCuotas) {
+      pgNroCuotas.value = "1";
+      pgNroCuotas.disabled = false;
+    }
+    prevNroCuotas = 1;
+
+    await refreshDeudoresList({ q: normStr(pgAlumnoSearch?.value) });
+
     rebuildCuotas();
     await refreshPagosPorCuota();
     renderCuotas();
   });
 
   pgNroCuotas?.addEventListener("change", async () => {
+    if (cursoPagadoCompleto) {
+      // si el curso está pagado, nro cuotas no debe modificarse
+      pgNroCuotas.value = "1";
+      pgNroCuotas.disabled = true;
+      return;
+    }
+
     const nuevo = Number(pgNroCuotas.value || 1);
     const hayPagos = pagosPorCuota && pagosPorCuota.size > 0;
-    const yaConfig =
-      Array.isArray(cuotasModelo) && cuotasModelo.length > 0 && prevNroCuotas != null && nuevo !== prevNroCuotas;
+    const cambioReal = prevNroCuotas != null && nuevo !== prevNroCuotas;
 
-    if (yaConfig && (hayPagos || cuotasModelo.length)) {
+    if (cambioReal && hayPagos) {
       const ok = window.confirm(
-        "Si modificas el número de cuotas, se reconfigurarán las cuotas y podrías perder la configuración actual. ¿Continuar?"
+        "Ya existen pagos registrados con el plan anterior. Si cambias el número de cuotas, se borrarán esos pagos para reconfigurar el plan de forma consistente. ¿Continuar?"
       );
       if (!ok) {
+        pgNroCuotas.value = String(prevNroCuotas);
+        return;
+      }
+
+try {
+  const alumno_id = Number(pgAlumnoId?.value || 0);
+  const curso_id = Number(pgCursoId?.value || 0);
+  const inscripcion_id = await getInscripcionIdRequired(alumno_id, curso_id);
+
+  await apiResetPlan(inscripcion_id);
+  cuotaSeleccionada = null;
+pagoSeleccionado = null;
+
+  // ✅ IMPORTANTE: refrescar lista principal (tabla)
+  await cargarPagos();
+
+  // ✅ refrescar estado del modal
+  await refreshPagosPorCuota();
+  renderCuotas();
+} catch (e) {
+        console.error(e);
+        if (msgPago) {
+          msgPago.textContent = "No se pudo resetear el plan de cuotas: " + String(e.message || e);
+          msgPago.className = "text-danger";
+        }
+        // revertir
         pgNroCuotas.value = String(prevNroCuotas);
         return;
       }
@@ -698,17 +893,12 @@ async function getInscripcionIdRequired(alumno_id, curso_id) {
     }
   });
 
-  function filterAlumnosList() {
-    const q = normStr(pgAlumnoSearch?.value).toLowerCase();
-    if (!q) return fillAlumnosList(alumnosCache);
+function filterAlumnosList() {
+  const q = normStr(pgAlumnoSearch?.value);
+  // ✅ en Pagos solo mostramos alumnos con deuda del curso seleccionado
+  refreshDeudoresList({ q });
+}
 
-    const filtered = alumnosCache.filter((a) => {
-      const n = normStr(a.nombre).toLowerCase();
-      const d = normStr(a.documento).toLowerCase();
-      return n.includes(q) || d.includes(q);
-    });
-    fillAlumnosList(filtered);
-  }
 
   pgAlumnoSearchBtn?.addEventListener("click", filterAlumnosList);
   pgAlumnoSearch?.addEventListener("keydown", (e) => {
@@ -852,7 +1042,9 @@ const inscripcion_id = await getInscripcionIdRequired(alumnoDb.id, Number(cursoI
     const open = sessionStorage.getItem("pay_open_modal");
     if (!open) return;
 
-    // limpiar flag para que no reabra siempre
+        openingFromDeudores = true;
+
+// limpiar flag para que no reabra siempre
     sessionStorage.removeItem("pay_open_modal");
 
     const doc = sessionStorage.getItem("pay_alumno_documento") || "";
@@ -914,7 +1106,13 @@ const inscripcion_id = await getInscripcionIdRequired(alumnoDb.id, Number(cursoI
   });
 
   // Al abrir modal: fecha por defecto hoy
-  document.getElementById("modalPago")?.addEventListener("shown.bs.modal", async () => {
+    document.getElementById("modalPago")?.addEventListener("show.bs.modal", async () => {
+    // ✅ reset estado al abrir modal (default nro cuotas = 1)
+    resetPagoModalState({ keepCurso: openingFromDeudores, keepAlumno: openingFromDeudores });
+    await refreshDeudoresList();
+  });
+
+document.getElementById("modalPago")?.addEventListener("shown.bs.modal", async () => {
     if (btnGuardarPago) btnGuardarPago.disabled = false;
 
     if (pgFecha && !pgFecha.value) {
@@ -929,5 +1127,6 @@ const inscripcion_id = await getInscripcionIdRequired(alumnoDb.id, Number(cursoI
 
     await refreshPagosPorCuota();
     renderCuotas();
+    openingFromDeudores = false;
   });
 })();
