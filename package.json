@@ -1,10 +1,10 @@
 {
   "name": "chino-barber",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "private": true,
   "main": "electron-main.js",
   "scripts": {
-    "start": "node src/services/server.js",
+    "start": "node services/server.js",
     "dev:server": "nodemon src/services/server.js",
     "dev": "electron .",
     "dist": "electron-builder --win",

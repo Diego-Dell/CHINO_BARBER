@@ -54,6 +54,22 @@ async function runMigrations() {
     // cursos: estas columnas son las que te están fallando en queries nuevas
     await ensureColumn("cursos", "fecha_inicio", "TEXT");
     await ensureColumn("cursos", "fecha_fin", "TEXT");
+
+    // pagos: compatibilidad (DBs viejas usaban "fecha")
+    // - si existe pagos.fecha pero no pagos.fecha_pago: crear fecha_pago y copiar
+    try {
+      const cols = await dbAll(`PRAGMA table_info(pagos);`);
+      const names = new Set(cols.map(c => String(c.name || "").toLowerCase()));
+      if (!names.has("fecha_pago")) {
+        await dbRun(`ALTER TABLE pagos ADD COLUMN fecha_pago TEXT;`);
+        console.log("[DB] Migración: agregado pagos.fecha_pago");
+      }
+      if (names.has("fecha") && names.has("fecha_pago")) {
+        await dbRun(`UPDATE pagos SET fecha_pago = fecha WHERE (fecha_pago IS NULL OR fecha_pago = "") AND (fecha IS NOT NULL AND fecha <> "")`);
+      }
+    } catch (e) {
+      console.warn("[DB] Migración pagos warn:", e.message);
+    }
   } catch (e) {
     console.warn("[DB] Migraciones warn:", e.message);
   }

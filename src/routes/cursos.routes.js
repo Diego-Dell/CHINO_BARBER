@@ -156,9 +156,11 @@ function calcFechaUltimaClase({ fecha_inicio, dias, nro_clases }) {
 // - Programado: si inicia la próxima semana (<= 7 días) o en el futuro cercano
 // - Finalizado: si ya pasó la última clase estimada
 // - En curso: caso contrario (ya inició y faltan clases)
-function calcularEstadoCurso({ fecha_inicio, dias, nro_clases, inscritos }) {
-  const ins = toInt(inscritos, 0);
-  if (ins === 0) return "Cancelado";
+function calcularEstadoCurso({ fecha_inicio, dias, nro_clases, estado_bd }) {
+  // ✅ Regla: un curso NO se vuelve "Cancelado" solo por tener 0 inscriptos.
+  // Cancelado debe venir explícito desde BD (si lo usas), o por acción del usuario.
+  const estBD = String(estado_bd || "").trim();
+  if (estBD === "Cancelado") return "Cancelado";
 
   const hoy = new Date();
   hoy.setHours(0, 0, 0, 0);
@@ -171,17 +173,17 @@ function calcularEstadoCurso({ fecha_inicio, dias, nro_clases, inscritos }) {
 
   const limiteProg = addDays(hoy, 7);
   if (fi > hoy && fi <= limiteProg) return "Programado";
-  if (fi > limiteProg) return "Programado"; // sigue siendo programado si está más lejos
+  if (fi > limiteProg) return "Programado";
 
   // Ya inició (fi <= hoy)
   const last = calcFechaUltimaClase({ fecha_inicio, dias, nro_clases });
   if (last) {
-    // si hoy es después del último día de clase => finalizado
     if (hoy > last) return "Finalizado";
   }
 
   return "En curso";
 }
+
 
 // ================= GET /api/cursos =================
 router.get("/", async (req, res) => {
@@ -241,12 +243,13 @@ router.get("/", async (req, res) => {
       }
 
       // calcular estado automático
-      const estadoAuto = calcularEstadoCurso({
-        fecha_inicio: extra.fecha_inicio,
-        dias: c.dias,
-        nro_clases: c.nro_clases,
-        inscritos: c.inscritos,
-      });
+const estadoAuto = calcularEstadoCurso({
+  fecha_inicio: extra.fecha_inicio,
+  dias: c.dias,
+  nro_clases: c.nro_clases,
+  estado_bd: c.estado,
+});
+
 
       return {
         ...c,

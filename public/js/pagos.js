@@ -153,23 +153,19 @@
     return row?.inscripcion_id || row?.id || null;
   }
 
-  async function apiCreateInscripcion(alumno_id, curso_id) {
-    await fetchJSON(`/api/inscripciones`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ alumno_id, curso_id, estado: "Activa" }),
-    });
-  }
+// ❌ NO auto-crear inscripciones desde Pagos.
+// Pago debe requerir inscripcion_id existente (flujo: primero Inscribir, luego Pagar).
+async function getInscripcionIdRequired(alumno_id, curso_id) {
+  const insId = await apiFindInscripcionActiva(alumno_id, curso_id);
+  if (insId) return insId;
 
-  async function getOrCreateInscripcionId(alumno_id, curso_id) {
-    let insId = await apiFindInscripcionActiva(alumno_id, curso_id);
-    if (insId) return insId;
+  const err = new Error("El alumno no está inscrito en este curso. Primero inscribe y luego registra el pago.");
+  err.code = "NO_INSCRIPCION";
+  throw err;
+}
 
-    await apiCreateInscripcion(alumno_id, curso_id);
-    insId = await apiFindInscripcionActiva(alumno_id, curso_id);
-    if (!insId) throw new Error("No se pudo obtener la inscripción (inscripcion_id)");
-    return insId;
-  }
+
+
 
   // ================= HELPERS =================
   function normStr(v) {
@@ -826,7 +822,8 @@
       msgPago.textContent = "Guardando pago...";
       msgPago.className = "text-muted";
 
-      const inscripcion_id = await getOrCreateInscripcionId(alumnoDb.id, Number(cursoId));
+const inscripcion_id = await getInscripcionIdRequired(alumnoDb.id, Number(cursoId));
+
 
       await apiPostPago({
         inscripcion_id,

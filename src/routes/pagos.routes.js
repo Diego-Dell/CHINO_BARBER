@@ -72,7 +72,7 @@ router.get("/", async (req, res) => {
 
     if (mes) {
       // filtra por mes de fecha_pago: YYYY-MM
-      where.push(`substr(p.fecha, 1, 7) = ?`);
+      where.push(`substr(p.fecha_pago, 1, 7) = ?`);
       params.push(mes);
     }
 
@@ -80,7 +80,7 @@ router.get("/", async (req, res) => {
       SELECT
         p.id,
         p.inscripcion_id,
-        p.fecha,
+        p.fecha_pago AS fecha,
         p.monto,
         p.estado,
         p.metodo,
@@ -100,7 +100,7 @@ router.get("/", async (req, res) => {
       JOIN alumnos a ON a.id = i.alumno_id
       JOIN cursos c ON c.id = i.curso_id
       ${where.length ? "WHERE " + where.join(" AND ") : ""}
-      ORDER BY p.fecha DESC, p.id DESC
+      ORDER BY p.fecha_pago DESC, p.id DESC
       LIMIT 500
     `;
 
@@ -142,7 +142,7 @@ router.post("/", async (req, res) => {
     }
 
     const r = await dbRun(
-      `INSERT INTO pagos (inscripcion_id, fecha, monto, estado, metodo, observaciones)
+      `INSERT INTO pagos (inscripcion_id, fecha_pago, monto, estado, metodo, observaciones)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [inscripcion_id, fecha, monto, estado, metodo, observaciones]
     );

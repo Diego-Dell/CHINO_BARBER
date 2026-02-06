@@ -29,7 +29,7 @@ process.env.DB_PATH = path.join(DB_DIR, "database.sqlite");
 process.env.NODE_ENV = "production";
 
 // En dev usamos 3000 fijo
-process.env.PORT = app.isPackaged ? "3000" : "3000";
+process.env.PORT = app.isPackaged ? "0" : "3000";
 
 function httpGet(url, timeoutMs = 1200) {
   return new Promise((resolve, reject) => {
@@ -155,9 +155,11 @@ app.whenReady().then(async () => {
 
     // ✅ Iniciar server en el MISMO proceso (evita líos de asar/spawn/rutas)
     log.info("Starting server (same process)...");
-    require("./services/server"); // <- server.js debe estar en /services
+    const srv = require("./services/server"); // <- server.js debe estar en /services
 
-    const baseUrl = "http://localhost:3000";
+    const port = (srv && typeof srv.getPort === "function") ? srv.getPort() : (Number(process.env.PORT)||3000);
+
+    const baseUrl = `http://localhost:${port}`;
     await waitForHealth(baseUrl, 20000);
     createWindow(baseUrl);
   } catch (err) {

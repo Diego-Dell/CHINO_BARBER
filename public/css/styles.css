@@ -856,3 +856,55 @@ body{
 .asv-dot.bad { background: #dc2626; }  /* faltó */
 .asv-dot.lic { background: #0284c7; }  /* licencia */
 .asv-dot.emp { background: #94a3b8; }  /* sin marcar */
+
+
+/* ===== Menu flotante A/F/L para asistencia (reemplaza prompt) ===== */
+.asMenu{
+  background: rgba(255,255,255,.98);
+  border: 1px solid rgba(0,0,0,.10);
+  border-radius: 12px;
+  padding: 10px;
+  backdrop-filter: blur(10px);
+}
+
+
+
+/* ==========================
+   FIX: Modal por encima del sidebar (Electron)
+   (Bootstrap modal z-index: 1055 / backdrop:1050)
+   Tu sidebar está arriba => lo tapaba.
+========================== */
+
+/* Asegura que el modal cubra TODO el viewport */
+.modal{
+  position: fixed !important;
+  inset: 0 !important;          /* top:0 right:0 bottom:0 left:0 */
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 20000 !important;    /* más alto que sidebar */
+}
+
+/* Backdrop también por encima */
+.modal-backdrop{
+  z-index: 19999 !important;
+}
+
+/* El diálogo centrado real */
+#modalPago .modal-dialog{
+  max-width: min(1100px, 96vw) !important;
+  margin: 1rem auto !important;
+}
+
+/* Body scrolleable sin salirse */
+#modalPago .modal-body{
+  max-height: calc(100vh - 160px) !important;
+  overflow: auto !important;
+}
+
+/* En pantallas chicas, apilar todo */
+@media (max-width: 576px){
+  #modalPago .modal-body .row > [class*="col-"]{
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+}

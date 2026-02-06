@@ -278,53 +278,123 @@ function renderGrid({ curso, fechas, inscritos, filtro }) {
 // ===============================
 // Selector modal/simple (dropdown)
 // ===============================
-function abrirSelectorEstado({ inscId, fecha }) {
-  const key = `${inscId}|${fecha}`;
+// ===============================
+// Selector UI (menu flotante A/F/L) - reemplaza prompt()
+// ===============================
+let asMenuEl = null;
+let asMenuState = { inscId: null, fecha: null };
 
-  const baseMap = asistenciasCache.get(fecha);
-  const base = baseMap ? (baseMap.get(inscId) || "") : "";
-  const actual = cambiosPendientes.get(key) ?? base;
+function ensureAsMenu() {
+  if (asMenuEl) return asMenuEl;
 
-  const opc = window.prompt(
-    `Asistencia ${fecha}
-A = Asistió
-F = Faltó
-L = Licencia
+  asMenuEl = document.createElement("div");
+  asMenuEl.id = "asMenu";
+  asMenuEl.className = "asMenu shadow";
+  asMenuEl.style.display = "none";
+  asMenuEl.innerHTML = `
+    <div class="btn-group btn-group-sm" role="group" aria-label="Asistencia">
+      <button type="button" class="btn btn-success" data-val="A">A</button>
+      <button type="button" class="btn btn-danger" data-val="F">F</button>
+      <button type="button" class="btn btn-info text-white" data-val="L">L</button>
+    </div>
+    <button type="button" class="btn btn-sm btn-light border ms-2" data-val="X" title="Limpiar">✕</button>
+  `;
 
-Actual: ${actual || "Sin registro"}
+  document.body.appendChild(asMenuEl);
 
-Escribe: A / F / L`,
-    actual
-      ? actual.startsWith("Asist") ? "A"
-        : actual.startsWith("Falt") ? "F"
-        : "L"
-      : ""
-  );
+  // Click en opciones
+  asMenuEl.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-val]");
+    if (!btn) return;
 
-  if (opc === null) return;
+    const v = btn.getAttribute("data-val");
+    const { inscId, fecha } = asMenuState;
+    if (!inscId || !fecha) return;
 
-  const v = String(opc).trim().toUpperCase();
-  let nuevo = "";
+    const key = `${inscId}|${fecha}`;
+    let nuevo = "";
 
-  if (v === "A") nuevo = "Asistió";
-  else if (v === "F") nuevo = "Faltó";
-  else if (v === "L") nuevo = "Licencia";
-  else return;
+    if (v === "A") nuevo = "Asistió";
+    else if (v === "F") nuevo = "Faltó";
+    else if (v === "L") nuevo = "Licencia";
+    else if (v === "X") nuevo = ""; // limpiar
 
-  // 🔴 ESTA LÍNEA ES LA CLAVE (ANTES FALLABA)
-  cambiosPendientes.set(key, nuevo);
+    if (nuevo === "") cambiosPendientes.delete(key);
+    else cambiosPendientes.set(key, nuevo);
 
-  renderGrid({
-    fechas: fechasCache,
-    inscritos: inscritosCache,
-    filtro: inpBuscar?.value || ""
+    hideAsMenu();
+
+    renderGrid({
+      fechas: fechasCache,
+      inscritos: inscritosCache,
+      filtro: inpBuscar?.value || ""
+    });
+
+    if (msgAs) {
+      msgAs.textContent =
+        `${inscritosCache.length} alumno(s) · ${fechasCache.length} clase(s) · cambios pendientes: ${cambiosPendientes.size}`;
+    }
   });
 
-  if (msgAs) {
-    msgAs.textContent =
-      `${inscritosCache.length} alumno(s) · ${fechasCache.length} clase(s) · cambios pendientes: ${cambiosPendientes.size}`;
+  // Cerrar al click afuera
+  document.addEventListener("mousedown", (e) => {
+    if (!asMenuEl || asMenuEl.style.display === "none") return;
+    if (asMenuEl.contains(e.target)) return;
+    hideAsMenu();
+  });
+
+  // Atajos teclado mientras el menu está abierto
+  document.addEventListener("keydown", (e) => {
+    if (!asMenuEl || asMenuEl.style.display === "none") return;
+    const k = String(e.key || "").toUpperCase();
+    if (!["A", "F", "L", "ESCAPE"].includes(k)) return;
+
+    if (k === "ESCAPE") return hideAsMenu();
+
+    const fakeBtn = asMenuEl.querySelector(`button[data-val="${k}"]`);
+    if (fakeBtn) fakeBtn.click();
+  });
+
+  return asMenuEl;
+}
+
+function showAsMenuAt({ x, y, inscId, fecha }) {
+  const el = ensureAsMenu();
+  asMenuState = { inscId, fecha };
+
+  el.style.display = "block";
+  el.style.position = "fixed";
+  el.style.zIndex = "9999";
+
+  // Ajuste para no salirse de pantalla
+  const pad = 8;
+  const rect = el.getBoundingClientRect();
+  const maxX = window.innerWidth - rect.width - pad;
+  const maxY = window.innerHeight - rect.height - pad;
+
+  el.style.left = `${Math.max(pad, Math.min(x, maxX))}px`;
+  el.style.top = `${Math.max(pad, Math.min(y, maxY))}px`;
+}
+
+function hideAsMenu() {
+  if (!asMenuEl) return;
+  asMenuEl.style.display = "none";
+  asMenuState = { inscId: null, fecha: null };
+}
+
+function abrirSelectorEstado({ inscId, fecha }) {
+  // mostrar menú al lado de donde clickeaste
+  // buscamos el botón actual para anclarlo visualmente
+  const btn = asGrid?.querySelector(`.asPick[data-insc="${inscId}"][data-fecha="${fecha}"]`);
+  if (btn) {
+    const r = btn.getBoundingClientRect();
+    showAsMenuAt({ x: r.left + r.width + 6, y: r.top, inscId, fecha });
+  } else {
+    // fallback
+    showAsMenuAt({ x: 12, y: 12, inscId, fecha });
   }
 }
+
 
 
 // ===============================
@@ -472,19 +542,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (asGrid) asGrid.innerHTML = `<div class="text-danger small p-3">Error: ${esc(e.message || "desconocido")}</div>`;
   }
 
-  const btnGuardar =
-  document.getElementById("btnGuardarAsVisual") ||
-  document.getElementById("btnGuardarAsistencia");
 
-if (btnGuardar) {
-  btnGuardar.addEventListener("click", async () => {
-    try {
-      await guardarCambios();
-    } catch (e) {
-      console.error(e);
-      if (msgAs) msgAs.textContent = "Error guardando: " + (e.message || "desconocido");
-    }
-  });
-}
 
 });

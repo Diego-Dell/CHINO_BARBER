@@ -142,4 +142,4 @@ const server = app.listen(requestedPort, () => {
 process.on("uncaughtException", (e) => console.error("[FATAL] uncaughtException:", e));
 process.on("unhandledRejection", (e) => console.error("[FATAL] unhandledRejection:", e));
 
-module.exports = app;
+module.exports = { app, server, getPort: () => server.address().port };
