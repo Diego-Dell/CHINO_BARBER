@@ -69,6 +69,8 @@ CREATE INDEX IF NOT EXISTS ix_instructores_estado ON instructores(estado);
 -- CURSOS
 -- =========================
 CREATE TABLE IF NOT EXISTS cursos (
+  fecha_inicio TEXT,
+fecha_fin TEXT,
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   nombre TEXT NOT NULL,
   nivel TEXT,

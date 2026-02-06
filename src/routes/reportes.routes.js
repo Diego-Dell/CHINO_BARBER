@@ -92,49 +92,34 @@ function monthsBetween(desdeISO, hastaISO) {
 // ===============================
 router.get("/dashboard", async (req, res) => {
   try {
-    /**
-     * Dashboard KPIs
-     * - Ingresos último mes = suma de pagos "Pagado" en los últimos 30 días (incluye hoy)
-     * - Alumnos activos/inactivos = según columna alumnos.estado
-     */
+    // mes actual (solo para KPIs del dashboard)
     const now = new Date();
-    const hoy = now.toISOString().slice(0, 10);
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const desdeMes = `${yyyy}-${mm}-01`;
+    const hastaMesExcl = (mm === "12")
+      ? `${yyyy + 1}-01-01`
+      : `${yyyy}-${String(Number(mm) + 1).padStart(2, "0")}-01`;
 
-    const d30 = new Date(now);
-    d30.setDate(d30.getDate() - 30);
-    const desde30 = d30.toISOString().slice(0, 10);
-
-    // Para rango exclusivo superior (mañana)
-    const maniana = new Date(now);
-    maniana.setDate(maniana.getDate() + 1);
-    const hastaExcl = maniana.toISOString().slice(0, 10);
-
-    const alumnosAct = await dbGet(`SELECT COUNT(*) AS n FROM alumnos WHERE estado = 'Activo'`);
-    const alumnosInact = await dbGet(`SELECT COUNT(*) AS n FROM alumnos WHERE estado = 'Inactivo'`);
+    const alumnos = await dbGet(`SELECT COUNT(*) AS n FROM alumnos WHERE estado = 'Activo'`);
     const cursos = await dbGet(
       `SELECT COUNT(*) AS n FROM cursos WHERE estado IN ('Programado','En curso')`
     );
     const pagosTot = await dbGet(`SELECT COUNT(*) AS n FROM pagos`);
 
-const ingresosUltimoMes = await dbGet(
-  `SELECT COALESCE(SUM(monto), 0) AS total
-   FROM pagos
-   WHERE estado = 'Pagado'
-     AND fecha_pago >= ? AND fecha_pago < ?`,
-  [desde30, hastaExcl]
-);
-
+    const ingresosMes = await dbGet(
+      `SELECT COALESCE(SUM(monto), 0) AS total
+       FROM pagos
+       WHERE estado = 'Pagado'
+         AND fecha >= ? AND fecha < ?`,
+      [desdeMes, hastaMesExcl]
+    );
 
     return res.json({
       ok: true,
       data: {
-        // compat: el frontend usa ingresos_mes_actual
-        ingresos_mes_actual: Number(ingresosUltimoMes?.total || 0),
-        ingresos_ultimo_mes_desde: desde30,
-        ingresos_ultimo_mes_hasta: hoy,
-        total_alumnos_activos: Number(alumnosAct?.n || 0),
-        total_alumnos_inactivos: Number(alumnosInact?.n || 0),
-        total_alumnos: Number((alumnosAct?.n || 0) + (alumnosInact?.n || 0)),
+        ingresos_mes_actual: Number(ingresosMes?.total || 0),
+        total_alumnos: Number(alumnos?.n || 0),
         total_cursos: Number(cursos?.n || 0),
         total_pagos_registrados: Number(pagosTot?.n || 0),
       },
@@ -220,24 +205,6 @@ router.get("/deudores", async (req, res) => {
     });
   }
 });
-
-// ===== esquema dinámico pagos (compat DB vieja/nueva) =====
-let _PAGOS_COLS = null;
-
-async function getPagosCols() {
-  if (_PAGOS_COLS) return _PAGOS_COLS;
-  const rows = await dbAll("PRAGMA table_info(pagos)");
-  _PAGOS_COLS = new Set(rows.map(r => String(r.name || "").toLowerCase()));
-  return _PAGOS_COLS;
-}
-
-function pickFechaCol(cols) {
-  const candidates = ["fecha_pago", "fecha", "created_at"];
-  for (const c of candidates) if (cols.has(c)) return c;
-  return null;
-}
-
-
 
 // ===============================
 // 3) KPI (reportes.html)

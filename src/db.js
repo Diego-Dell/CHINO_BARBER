@@ -26,6 +26,43 @@ db.serialize(() => {
   try { db.run("PRAGMA synchronous = NORMAL;"); } catch (_) {}
 });
 
+
+// ==== MIGRACIONES (compatibilidad con DBs viejas) ====
+function dbAll(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows || [])));
+  });
+}
+
+function dbRun(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
+async function ensureColumn(table, colName, colType) {
+  const cols = await dbAll(`PRAGMA table_info(${table});`);
+  const names = new Set(cols.map(c => String(c.name || "").toLowerCase()));
+  if (!names.has(colName.toLowerCase())) {
+    await dbRun(`ALTER TABLE ${table} ADD COLUMN ${colName} ${colType};`);
+    console.log(`[DB] Migración: agregado ${table}.${colName}`);
+  }
+}
+
+async function runMigrations() {
+  try {
+    // cursos: estas columnas son las que te están fallando en queries nuevas
+    await ensureColumn("cursos", "fecha_inicio", "TEXT");
+    await ensureColumn("cursos", "fecha_fin", "TEXT");
+  } catch (e) {
+    console.warn("[DB] Migraciones warn:", e.message);
+  }
+}
+
+// Ejecutar migraciones
+runMigrations();
+
+
 // schema.sql: el del proyecto
 function findSchemaPath() {
   const cands = [];

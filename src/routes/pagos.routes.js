@@ -44,37 +44,6 @@ function isISODate(s) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
 }
 
-// ===== esquema dinámico pagos =====
-let _PAGOS_COLS = null;
-
-async function getPagosCols() {
-  if (_PAGOS_COLS) return _PAGOS_COLS;
-  const rows = await dbAll("PRAGMA table_info(pagos)");
-  _PAGOS_COLS = new Set(rows.map((r) => String(r.name || "").toLowerCase()));
-  return _PAGOS_COLS;
-}
-
-function pickFechaCol(cols) {
-  // prioridad: fecha -> fecha_pago -> fechaPago -> created_at
-  const candidates = ["fecha", "fecha_pago", "fechapago", "created_at", "createdat"];
-  for (const c of candidates) if (cols.has(c)) return c;
-  return null;
-}
-
-// util: alumno documento puede variar (documento / ci)
-let _ALUMNOS_COLS = null;
-async function getAlumnosCols() {
-  if (_ALUMNOS_COLS) return _ALUMNOS_COLS;
-  const rows = await dbAll("PRAGMA table_info(alumnos)");
-  _ALUMNOS_COLS = new Set(rows.map((r) => String(r.name || "").toLowerCase()));
-  return _ALUMNOS_COLS;
-}
-function pickAlumnoDocCol(cols) {
-  const candidates = ["documento", "ci", "cedula", "dni"];
-  for (const c of candidates) if (cols.has(c)) return c;
-  return "documento";
-}
-
 // ===============================
 // GET /api/pagos?buscar=&estado=&mes=YYYY-MM
 // ===============================
@@ -84,23 +53,13 @@ router.get("/", async (req, res) => {
     const estado = normStr(req.query.estado);
     const mes = normStr(req.query.mes); // YYYY-MM
 
-    const pagosCols = await getPagosCols();
-    const fechaCol = pickFechaCol(pagosCols);
-    if (!fechaCol) {
-      // si no hay ninguna columna tipo fecha, devolvemos igual pero sin filtro por mes
-      console.warn("[PAGOS] No se encontró columna fecha en tabla pagos.");
-    }
-
-    const alumnosCols = await getAlumnosCols();
-    const alumnoDocCol = pickAlumnoDocCol(alumnosCols);
-
     const where = [];
     const params = [];
 
     if (buscar) {
       where.push(`(
         lower(a.nombre) LIKE lower(?) OR
-        lower(a.${alumnoDocCol}) LIKE lower(?) OR
+        lower(a.documento) LIKE lower(?) OR
         lower(c.nombre) LIKE lower(?)
       )`);
       params.push(`%${buscar}%`, `%${buscar}%`, `%${buscar}%`);
@@ -111,58 +70,42 @@ router.get("/", async (req, res) => {
       params.push(estado);
     }
 
-    if (mes && fechaCol) {
-      // filtra por mes: YYYY-MM
-      where.push(`substr(p.${fechaCol}, 1, 7) = ?`);
+    if (mes) {
+      // filtra por mes de fecha_pago: YYYY-MM
+      where.push(`substr(p.fecha, 1, 7) = ?`);
       params.push(mes);
     }
-
-    // SELECT fecha "normalizada" como p_fecha para front
-    const fechaSelect = fechaCol ? `p.${fechaCol} AS fecha` : `NULL AS fecha`;
-    const orderBy = fechaCol ? `p.${fechaCol} DESC, p.id DESC` : `p.id DESC`;
-
-    // Observaciones puede variar (observaciones / obs)
-    const obsCol = pagosCols.has("observaciones")
-      ? "observaciones"
-      : pagosCols.has("obs")
-        ? "obs"
-        : null;
-
-    const obsSelect = obsCol ? `p.${obsCol} AS observaciones` : `NULL AS observaciones`;
 
     const sql = `
       SELECT
         p.id,
         p.inscripcion_id,
-        ${fechaSelect},
+        p.fecha,
         p.monto,
         p.estado,
         p.metodo,
-        ${obsSelect},
-        ${pagosCols.has("created_at") ? "p.created_at" : "NULL AS created_at"},
+        p.observaciones,
+        p.created_at,
 
         a.id AS alumno_id,
         a.nombre AS alumno_nombre,
-        a.${alumnoDocCol} AS alumno_documento,
+        a.documento AS alumno_documento,
 
         c.id AS curso_id,
         c.nombre AS curso_nombre,
-        ${(() => {
-          // por si cursos no tiene precio, no rompe
-          return "c.precio AS curso_precio";
-        })()}
+        c.precio AS curso_precio
 
       FROM pagos p
       JOIN inscripciones i ON i.id = p.inscripcion_id
       JOIN alumnos a ON a.id = i.alumno_id
       JOIN cursos c ON c.id = i.curso_id
       ${where.length ? "WHERE " + where.join(" AND ") : ""}
-      ORDER BY ${orderBy}
+      ORDER BY p.fecha DESC, p.id DESC
       LIMIT 500
     `;
 
     const rows = await dbAll(sql, params);
-    return res.json(rows); // 👈 mantiene tu formato (array)
+    return res.json(rows);
   } catch (err) {
     console.error("[/api/pagos] GET error:", err);
     return res.status(500).json({ ok: false, error: err.message || "Error" });
@@ -175,29 +118,21 @@ router.get("/", async (req, res) => {
 // ===============================
 router.post("/", async (req, res) => {
   try {
-    const pagosCols = await getPagosCols();
-    const fechaCol = pickFechaCol(pagosCols);
-
     const inscripcion_id = toNum(req.body.inscripcion_id, 0);
-
-    // acepta fecha o fecha_pago desde el front
-    const fechaIn = normStr(req.body.fecha || req.body.fecha_pago || req.body.fechaPago);
-
+    const fecha = normStr(req.body.fecha || req.body.fecha_pago);
     const monto = toNum(req.body.monto, NaN);
     const estado = normStr(req.body.estado) || "Pagado";
     const metodo = normStr(req.body.metodo) || "Efectivo";
-    const observaciones = normStr(req.body.observaciones || req.body.obs);
+    const observaciones = normStr(req.body.observaciones);
 
     if (!inscripcion_id) {
       return res.status(400).json({ ok: false, error: "inscripcion_id es requerido" });
     }
+    if (!isISODate(fecha)) {
+      return res.status(400).json({ ok: false, error: "Fecha inválida (usa YYYY-MM-DD)" });
+    }
     if (!Number.isFinite(monto)) {
       return res.status(400).json({ ok: false, error: "Monto inválido" });
-    }
-
-    // Si existe columna fecha, debe venir en ISO. Si NO existe, seguimos (se guardará en created_at o no se guardará).
-    if (fechaCol && fechaCol !== "created_at" && !isISODate(fechaIn)) {
-      return res.status(400).json({ ok: false, error: "Fecha inválida (usa YYYY-MM-DD)" });
     }
 
     // validar que exista la inscripción
@@ -206,52 +141,11 @@ router.post("/", async (req, res) => {
       return res.status(404).json({ ok: false, error: "Inscripción no existe" });
     }
 
-    // observaciones/obs según columna existente
-    const obsCol = pagosCols.has("observaciones")
-      ? "observaciones"
-      : pagosCols.has("obs")
-        ? "obs"
-        : null;
-
-    // INSERT dinámico según columnas reales
-    const fields = ["inscripcion_id"];
-    const qs = ["?"];
-    const vals = [inscripcion_id];
-
-    if (fechaCol && fechaCol !== "created_at") {
-      fields.push(fechaCol);
-      qs.push("?");
-      vals.push(fechaIn);
-    } else if (pagosCols.has("fecha")) {
-      // fallback por si pick falló raro
-      fields.push("fecha");
-      qs.push("?");
-      vals.push(fechaIn);
-    }
-
-    fields.push("monto");
-    qs.push("?");
-    vals.push(monto);
-
-    if (pagosCols.has("estado")) {
-      fields.push("estado");
-      qs.push("?");
-      vals.push(estado);
-    }
-    if (pagosCols.has("metodo")) {
-      fields.push("metodo");
-      qs.push("?");
-      vals.push(metodo);
-    }
-    if (obsCol) {
-      fields.push(obsCol);
-      qs.push("?");
-      vals.push(observaciones || null);
-    }
-
-    const sqlIns = `INSERT INTO pagos (${fields.join(", ")}) VALUES (${qs.join(", ")})`;
-
-    const r = await dbRun(sqlIns, vals);
+    const r = await dbRun(
+      `INSERT INTO pagos (inscripcion_id, fecha, monto, estado, metodo, observaciones)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [inscripcion_id, fecha, monto, estado, metodo, observaciones]
+    );
 
     const created = await dbGet(`SELECT * FROM pagos WHERE id = ?`, [r.lastID]);
     return res.json({ ok: true, pago: created });
