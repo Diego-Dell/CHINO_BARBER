@@ -1,5 +1,6 @@
 const express = require("express");
 const db = require("../db");
+const { syncCursosFinalizados } = require("../utils/syncEstados");
 const router = express.Router();
 
 // ================= helpers DB =================
@@ -188,6 +189,9 @@ function calcularEstadoCurso({ fecha_inicio, dias, nro_clases, estado_bd }) {
 // ================= GET /api/cursos =================
 router.get("/", async (req, res) => {
   try {
+    // Sincronizar estados automáticamente antes de listar
+    await syncCursosFinalizados().catch(e => console.error("[CURSOS][SYNC]", e));
+
     const cols = await getCursosCols();
 
     // Filtro opcional por q / estado (tu front lo manda)
@@ -274,6 +278,7 @@ router.get("/:id", async (req, res) => {
   if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
   try {
+    await syncCursosFinalizados().catch(e => console.error("[CURSOS][SYNC]", e));
     const cols = await getCursosCols();
 
     const c = await dbGet(
@@ -316,7 +321,7 @@ router.get("/:id", async (req, res) => {
       fecha_inicio: extra.fecha_inicio,
       dias: c.dias,
       nro_clases: c.nro_clases,
-      inscritos: c.inscritos,
+      estado_bd: c.estado,
     });
 
     return res.json({

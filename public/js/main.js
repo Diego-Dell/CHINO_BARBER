@@ -1,6 +1,6 @@
-// public/js/main.js
-// Script común (seguro para todas las páginas). Carga el dashboard SOLO si está en index.html.
+// public/js/main.js  — Utilidades globales compartidas entre todas las páginas
 
+// ── fetchJSON ─────────────────────────────────────────────────────
 async function fetchJSON(url, options = {}) {
   const r = await fetch(url, { credentials: "include", ...options });
   const ct = r.headers.get("content-type") || "";
@@ -13,83 +13,68 @@ async function fetchJSON(url, options = {}) {
   return isJson ? r.json() : null;
 }
 
+// ── Formato Bolivianos ────────────────────────────────────────────
 const bs = (n) => "Bs " + Number(n || 0).toFixed(2);
 
-let __dashboardChart = null;
+// ── Toast notification system ─────────────────────────────────────
+(function initToast() {
+  if (document.getElementById("toastContainer")) return;
+  const c = document.createElement("div");
+  c.id = "toastContainer";
+  document.body.appendChild(c);
+})();
 
+/**
+ * showToast({ title, message, type, duration })
+ * type: "success" | "error" | "info" | "warning"
+ */
+function showToast({ title = "", message = "", type = "info", duration = 3500 } = {}) {
+  const container = document.getElementById("toastContainer") || (() => {
+    const c = document.createElement("div");
+    c.id = "toastContainer";
+    document.body.appendChild(c);
+    return c;
+  })();
+
+  const icons = { success: "✅", error: "❌", info: "ℹ️", warning: "⚠️" };
+  const t = document.createElement("div");
+  t.className = `app-toast ${type}`;
+  t.innerHTML = `
+    <div class="app-toast-icon">${icons[type] || "ℹ️"}</div>
+    <div class="app-toast-body">
+      <div class="app-toast-title">${title || type.charAt(0).toUpperCase() + type.slice(1)}</div>
+      ${message ? `<div class="app-toast-msg">${message}</div>` : ""}
+    </div>`;
+
+  container.appendChild(t);
+
+  const remove = () => {
+    t.classList.add("hiding");
+    t.addEventListener("animationend", () => t.remove(), { once: true });
+  };
+
+  setTimeout(remove, duration);
+  t.addEventListener("click", remove);
+  return t;
+}
+
+// ── Sidebar toggle ────────────────────────────────────────────────
+function toggleSidebar() {
+  document.getElementById("sidebar")?.classList.toggle("open");
+  document.getElementById("overlay")?.classList.toggle("show");
+}
+
+// ── setText helper ────────────────────────────────────────────────
 function setText(id, value) {
   const el = document.getElementById(id);
   if (el) el.textContent = value;
 }
 
-function renderIngresosChart(canvasId, labels = [], values = []) {
-  const canvas = document.getElementById(canvasId);
-  if (!canvas || typeof Chart === "undefined") return;
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-
-  if (__dashboardChart) {
-    __dashboardChart.destroy();
-    __dashboardChart = null;
-  }
-
-  __dashboardChart = new Chart(ctx, {
-    type: "line",
-    data: {
-      labels,
-      datasets: [
-        {
-          label: "Ingresos",
-          data: values,
-          tension: 0.25,
-          fill: true,
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: (ctx) => bs(ctx.parsed?.y ?? 0),
-          },
-        },
-      },
-      scales: {
-        y: {
-          ticks: {
-            callback: (v) => bs(v),
-          },
-        },
-      },
-    },
-  });
+// ── Empty-state HTML helper ───────────────────────────────────────
+function emptyStateHTML(icon = "📭", title = "Sin datos", sub = "No hay registros para mostrar.") {
+  return `<div class="empty-state">
+    <div class="empty-state-icon">${icon}</div>
+    <div class="empty-state-title">${title}</div>
+    <div class="empty-state-sub">${sub}</div>
+  </div>`;
 }
-
-async function cargarDashboardIndex() {
-  // Solo en index.html (si existe el canvas del dashboard)
-  const canvas = document.getElementById("grafIngresosMes");
-  if (!canvas) return;
-
-  try {
-    const resp = await fetchJSON("/api/reportes/dashboard");
-    const d = resp?.data || resp?.ok?.data || resp?.data;
-
-    setText("kpiIngresosMes", bs(d?.ingresos_mes_actual ?? 0));
-    setText("kpiAlumnos", d?.total_alumnos ?? 0);
-    setText("kpiPagos", d?.total_pagos ?? 0);
-
-    const labels = d?.ingresos_12m?.labels || [];
-    const values = d?.ingresos_12m?.values || [];
-    renderIngresosChart("grafIngresosMes", labels, values);
-  } catch (e) {
-    console.error("Dashboard error:", e);
-  }
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  cargarDashboardIndex();
-});

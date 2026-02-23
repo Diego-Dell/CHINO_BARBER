@@ -1,5 +1,6 @@
 const express = require("express");
 const db = require("../db"); // Debe exportar sqlite Database()
+const { syncCursosFinalizados } = require("../utils/syncEstados");
 const router = express.Router();
 
 // ===============================
@@ -39,6 +40,7 @@ function likeWrap(q) {
 /**
  * Estado AUTOMÁTICO:
  * Activo   = existe al menos 1 inscripción con estado='Activa'
+ *            (considera que inscripciones finalizadas/canceladas = no activas)
  * Inactivo = si no tiene ninguna inscripción activa
  */
 const SELECT_ALUMNOS_WITH_ESTADO = `
@@ -118,6 +120,9 @@ router.get("/by-documento/:doc", async (req, res) => {
 // =====================================
 router.get("/", async (req, res) => {
   try {
+    // Sincronizar estados de cursos/inscripciones antes de calcular estado de alumnos
+    await syncCursosFinalizados().catch(e => console.error("[ALUMNOS][SYNC]", e));
+
     const rows = await dbAll(
       `
       ${SELECT_ALUMNOS_WITH_ESTADO}
@@ -170,6 +175,20 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ ok: false, error: "Nombre y documento son obligatorios" });
   }
 
+  // Validación de longitud
+  if (String(nombre).trim().length > 120) {
+    return res.status(400).json({ ok: false, error: "Nombre demasiado largo (máx. 120 caracteres)" });
+  }
+  if (String(documento).trim().length > 50) {
+    return res.status(400).json({ ok: false, error: "Documento demasiado largo (máx. 50 caracteres)" });
+  }
+  if (telefono && String(telefono).trim().length > 30) {
+    return res.status(400).json({ ok: false, error: "Teléfono demasiado largo (máx. 30 caracteres)" });
+  }
+  if (email && String(email).trim().length > 120) {
+    return res.status(400).json({ ok: false, error: "Email demasiado largo (máx. 120 caracteres)" });
+  }
+
   try {
     const exists = await dbGet("SELECT id FROM alumnos WHERE documento = ?", [documento]);
     if (exists) return res.status(409).json({ ok: false, error: "El documento ya está registrado" });
@@ -204,6 +223,14 @@ router.put("/:id", async (req, res) => {
     return res.status(400).json({ ok: false, error: "Nombre y documento son obligatorios" });
   }
 
+  // Validación de longitud
+  if (String(nombre).trim().length > 120) {
+    return res.status(400).json({ ok: false, error: "Nombre demasiado largo (máx. 120 caracteres)" });
+  }
+  if (String(documento).trim().length > 50) {
+    return res.status(400).json({ ok: false, error: "Documento demasiado largo (máx. 50 caracteres)" });
+  }
+
   try {
     const dup = await dbGet("SELECT id FROM alumnos WHERE documento = ? AND id != ?", [documento, id]);
     if (dup) return res.status(409).json({ ok: false, error: "El documento ya está registrado" });
@@ -236,14 +263,18 @@ router.delete("/:id", async (req, res) => {
   if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
   try {
-    await dbRun("BEGIN");
-    await dbRun(`UPDATE inscripciones SET estado = 'Cancelada' WHERE alumno_id = ? AND estado = 'Activa'`, [id]);
-    await dbRun(`UPDATE alumnos SET estado = 'Inactivo' WHERE id = ?`, [id]);
-    await dbRun("COMMIT");
+    await dbRun("BEGIN IMMEDIATE");
+    try {
+      await dbRun(`UPDATE inscripciones SET estado = 'Cancelada' WHERE alumno_id = ? AND estado = 'Activa'`, [id]);
+      await dbRun(`UPDATE alumnos SET estado = 'Inactivo' WHERE id = ?`, [id]);
+      await dbRun("COMMIT");
+    } catch (e) {
+      await dbRun("ROLLBACK").catch(() => {});
+      throw e;
+    }
     return res.json({ ok: true });
   } catch (e) {
     console.error("[ALUMNOS][DELETE]", e);
-    try { await dbRun("ROLLBACK"); } catch (_) {}
     return res.status(500).json({ ok: false, error: "Error al dar de baja al alumno" });
   }
 });

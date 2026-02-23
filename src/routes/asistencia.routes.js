@@ -207,90 +207,59 @@ router.post("/", async (req, res) => {
 // Body: { items: [{inscripcion_id, fecha, estado, observacion?}, ...] }
 // Upsert manual dentro de transacción
 // ===============================
-router.post("/bulk", (req, res) => {
+// ===============================
+// POST /api/asistencia/bulk
+// Body: { items: [{inscripcion_id, fecha, estado, observacion?}, ...] }
+// Upsert dentro de transacción async/await
+// ===============================
+router.post("/bulk", async (req, res) => {
   const { items } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) return bad(res, "items es obligatorio");
 
-  db.serialize(() => {
-    db.run("BEGIN TRANSACTION");
+  // Filtrar items válidos
+  const valid = items.filter((it) => {
+    const insc = Number(it.inscripcion_id ?? it.inscripcionId ?? 0);
+    const f = String(it.fecha || "").slice(0, 10);
+    return insc > 0 && /^\d{4}-\d{2}-\d{2}$/.test(f);
+  });
 
-    const stmtUpdate = db.prepare(`
-      UPDATE asistencia
-      SET estado = ?, observacion = ?, updated_at = datetime('now')
-      WHERE inscripcion_id = ? AND fecha = ?
-    `);
+  if (valid.length === 0) return res.json({ ok: true, processed: 0 });
 
-    const stmtInsert = db.prepare(`
-      INSERT INTO asistencia (inscripcion_id, fecha, estado, observacion, created_at, updated_at)
-      VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
-    `);
+  try {
+    await runAsync("BEGIN IMMEDIATE");
 
     try {
-      let pend = 0;
-      let failed = false;
-
-      const done = (err) => {
-        if (failed) return;
-        if (err) {
-          failed = true;
-          stmtUpdate.finalize(() => {
-            stmtInsert.finalize(() => {
-              db.run("ROLLBACK");
-              return bad(res, err.message || "Error bulk", 500);
-            });
-          });
-          return;
-        }
-
-        pend--;
-        if (pend <= 0) {
-          stmtUpdate.finalize(() => {
-            stmtInsert.finalize(() => {
-              db.run("COMMIT", (err2) => {
-                if (err2) return bad(res, err2.message, 500);
-                return res.json({ ok: true });
-              });
-            });
-          });
-        }
-      };
-
-      for (const it of items) {
+      for (const it of valid) {
         const insc = Number(it.inscripcion_id ?? it.inscripcionId ?? 0);
         const f = String(it.fecha || "").slice(0, 10);
-        if (!insc || !f) continue;
-
         const est = normEstado(it.estado);
         const obs = it.observacion ?? null;
 
-        pend++;
-        stmtUpdate.run([est, obs, insc, f], function (err) {
-          if (err) return done(err);
+        const up = await runAsync(
+          `UPDATE asistencia SET estado = ?, observacion = ?, updated_at = datetime('now')
+           WHERE inscripcion_id = ? AND fecha = ?`,
+          [est, obs, insc, f]
+        );
 
-          if (this.changes && this.changes > 0) {
-            return done(null);
-          }
-
-          stmtInsert.run([insc, f, est, obs], (err2) => done(err2));
-        });
+        if (!up.changes) {
+          await runAsync(
+            `INSERT INTO asistencia (inscripcion_id, fecha, estado, observacion, created_at, updated_at)
+             VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))`,
+            [insc, f, est, obs]
+          );
+        }
       }
 
-      if (pend === 0) {
-        stmtUpdate.finalize(() => {
-          stmtInsert.finalize(() => {
-            db.run("COMMIT", () => res.json({ ok: true }));
-          });
-        });
-      }
-    } catch (e) {
-      stmtUpdate.finalize(() => {
-        stmtInsert.finalize(() => {
-          db.run("ROLLBACK");
-          return bad(res, e.message || "Error bulk", 500);
-        });
-      });
+      await runAsync("COMMIT");
+      return res.json({ ok: true, processed: valid.length });
+    } catch (err) {
+      await runAsync("ROLLBACK").catch(() => {});
+      throw err;
     }
-  });
+  } catch (e) {
+    console.error("[POST /api/asistencia/bulk] Error:", e);
+    return bad(res, e.message || "Error bulk", 500);
+  }
 });
 
 // ===============================

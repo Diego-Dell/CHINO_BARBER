@@ -200,6 +200,7 @@ CREATE TABLE IF NOT EXISTS inventario_items (
   categoria TEXT,
   unidad TEXT,
   stock_minimo INTEGER NOT NULL DEFAULT 0 CHECK(stock_minimo >= 0),
+  precio_minimo REAL NOT NULL DEFAULT 0 CHECK(precio_minimo >= 0),
   estado TEXT NOT NULL DEFAULT 'Activo'
     CHECK(estado IN ('Activo','Inactivo')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -217,9 +218,11 @@ CREATE TABLE IF NOT EXISTS inventario_movimientos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   item_id INTEGER NOT NULL,
   fecha TEXT NOT NULL DEFAULT (date('now')),
-  tipo TEXT NOT NULL CHECK(tipo IN ('Ingreso','Salida','Ajuste')),
+  tipo TEXT NOT NULL CHECK(tipo IN ('Ingreso','Salida','Ajuste','Prestamo','Devolucion','Venta')),
   cantidad INTEGER NOT NULL CHECK(cantidad <> 0),
   costo_unitario REAL NOT NULL DEFAULT 0 CHECK(costo_unitario >= 0),
+  precio_unitario REAL NOT NULL DEFAULT 0 CHECK(precio_unitario >= 0),
+  precio_venta REAL,
   motivo TEXT,
   curso_id INTEGER,
   instructor_id INTEGER,
@@ -276,6 +279,36 @@ CREATE TABLE IF NOT EXISTS agenda_turnos (
 CREATE INDEX IF NOT EXISTS ix_turnos_fecha ON agenda_turnos(fecha);
 CREATE INDEX IF NOT EXISTS ix_turnos_estado ON agenda_turnos(estado);
 CREATE INDEX IF NOT EXISTS ix_turnos_instructor ON agenda_turnos(instructor_id);
+
+-- =========================
+-- INVENTARIO PRESTAMOS
+-- =========================
+CREATE TABLE IF NOT EXISTS inventario_prestamos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL,
+  instructor_id INTEGER NOT NULL,
+  curso_id INTEGER,
+  fecha TEXT NOT NULL DEFAULT (date('now')),
+  cantidad INTEGER NOT NULL CHECK(cantidad > 0),
+  nota TEXT,
+  estado TEXT NOT NULL DEFAULT 'Pendiente' CHECK(estado IN ('Pendiente','Devuelto')),
+  cantidad_devuelta INTEGER NOT NULL DEFAULT 0 CHECK(cantidad_devuelta >= 0),
+  fecha_devolucion TEXT,
+  mov_salida_id INTEGER,
+  mov_devolucion_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (item_id) REFERENCES inventario_items(id) ON UPDATE CASCADE ON DELETE CASCADE,
+  FOREIGN KEY (instructor_id) REFERENCES instructores(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  FOREIGN KEY (curso_id) REFERENCES cursos(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  FOREIGN KEY (mov_salida_id) REFERENCES inventario_movimientos(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  FOREIGN KEY (mov_devolucion_id) REFERENCES inventario_movimientos(id) ON UPDATE CASCADE ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_prest_item ON inventario_prestamos(item_id);
+CREATE INDEX IF NOT EXISTS ix_prest_estado ON inventario_prestamos(estado);
+CREATE INDEX IF NOT EXISTS ix_prest_instructor ON inventario_prestamos(instructor_id);
+CREATE INDEX IF NOT EXISTS ix_prest_fecha ON inventario_prestamos(fecha);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_inscripcion_fecha
 ON asistencia(inscripcion_id, fecha);

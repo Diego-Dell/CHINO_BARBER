@@ -36,7 +36,7 @@
 
   const bs = (n) => "Bs " + Number(n || 0).toFixed(2);
   const esc = (s) =>
-    String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] || c));
+    String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] || c));
 
   // ================= estado global =================
   let cursosCache = [];
@@ -434,6 +434,8 @@ async function getInscripcionIdRequired(alumno_id, curso_id) {
         return `
       <button type="button" class="list-group-item list-group-item-action" 
               data-id="${esc(alumnoId)}" 
+              data-nombre="${esc(nombre)}"
+              data-doc="${esc(documento)}"
               data-ins="${esc(row.inscripcion_id ?? "")}">
         <div class="d-flex justify-content-between align-items-center gap-2">
           <div class="fw-semibold text-truncate">${esc(nombre)}</div>
@@ -448,7 +450,19 @@ async function getInscripcionIdRequired(alumno_id, curso_id) {
     pgAlumnosList.querySelectorAll("button[data-id]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const id = btn.getAttribute("data-id");
-        const a = alumnosCache.find((x) => String(x.id) === String(id)) || null;
+        const doc = btn.getAttribute("data-doc") || "";
+        const nombre = btn.getAttribute("data-nombre") || "";
+
+        // Buscar en caché primero, luego por documento como fallback
+        let a = alumnosCache.find((x) => String(x.id) === String(id)) || null;
+        if (!a && doc) {
+          a = await apiGetAlumnoByDocumento(doc).catch(() => null);
+        }
+        if (!a && (id || nombre || doc)) {
+          // Construir objeto mínimo desde los data attributes
+          a = { id: id || null, nombre, documento: doc };
+        }
+
         if (a) {
           setAlumnoUI(a);
           await refreshPagosPorCuota();
@@ -1039,17 +1053,19 @@ const inscripcion_id = await getInscripcionIdRequired(alumnoDb.id, Number(cursoI
 
   // ================= “PAGAR DESDE DEUDORES” =================
   async function openModalIfRequested() {
-    const open = sessionStorage.getItem("pay_open_modal");
-    if (!open) return;
+    // Soporta tanto URL params (ci=, curso_id=, openPago=1) como sessionStorage (legado)
+    const urlParams = new URLSearchParams(window.location.search);
+    const openFromUrl = urlParams.get("openPago") === "1";
+    const openFromSession = sessionStorage.getItem("pay_open_modal");
 
-        openingFromDeudores = true;
+    if (!openFromUrl && !openFromSession) return;
 
-// limpiar flag para que no reabra siempre
+    openingFromDeudores = true;
     sessionStorage.removeItem("pay_open_modal");
 
-    const doc = sessionStorage.getItem("pay_alumno_documento") || "";
+    const doc = urlParams.get("ci") || sessionStorage.getItem("pay_alumno_documento") || "";
     const nombre = sessionStorage.getItem("pay_alumno_nombre") || "";
-    const cursoId = sessionStorage.getItem("pay_curso_id") || "";
+    const cursoId = urlParams.get("curso_id") || sessionStorage.getItem("pay_curso_id") || "";
 
     // prefill
     if (cursoId && pgCursoId) pgCursoId.value = cursoId;

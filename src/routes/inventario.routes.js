@@ -3,13 +3,10 @@ const express = require("express");
 const db = require("../db");
 const router = express.Router();
 
-// ===== Middlewares (placeholder) =====
 function authRequired(req, res, next) { return next(); }
 function adminOnly(req, res, next) { return next(); }
-
 router.use(authRequired);
 
-// ===== Helpers SQLite promisificados =====
 function dbRun(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
@@ -34,11 +31,14 @@ function dbAll(sql, params = []) {
     });
   });
 }
+function dbExec(sql) {
+  return new Promise((resolve, reject) => {
+    db.exec(sql, (err) => (err ? reject(err) : resolve()));
+  });
+}
 
-// ===== Utilidades =====
 const ITEM_ESTADOS = new Set(["Activo", "Inactivo"]);
-// ✅ Acepta "Ingreso" (DB) y también "Entrada" (compatibilidad)
-const MOV_TIPOS = new Set(["Ingreso", "Entrada", "Salida", "Ajuste"]);
+const MOV_TIPOS = new Set(["Ingreso", "Entrada", "Salida", "Ajuste", "Prestamo", "Devolucion", "Venta"]);
 
 function normStr(v) {
   if (v === undefined || v === null) return null;
@@ -65,134 +65,136 @@ function isISODate(s) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const dt = new Date(`${s}T00:00:00Z`);
   const [y, m, d] = s.split("-").map(Number);
-  return (
-    dt.getUTCFullYear() === y &&
-    dt.getUTCMonth() + 1 === m &&
-    dt.getUTCDate() === d
-  );
+  return dt.getUTCFullYear() === y && (dt.getUTCMonth() + 1) === m && dt.getUTCDate() === d;
 }
 function likeWrap(s) { return `%${String(s || "").trim()}%`; }
-
-// ✅ Normaliza tipo: Entrada -> Ingreso
 function normalizeTipo(tipo) {
   if (tipo === "Entrada") return "Ingreso";
   return tipo;
 }
 
-// ===== Stock dinámico (según schema) =====
-// stock = SUM(Ingreso) - SUM(Salida) + SUM(Ajuste)
+// ===== Schema flags =====
+let FLAGS_READY = false;
+let HAS_MOV_PRECIO_UNITARIO = false;
+let HAS_PRESTAMOS_TABLE = false;
+let P_HAS_NOTA = false;
+let P_HAS_CANT_DEV = false;
+let P_HAS_FECHA_DEV = false;
+
+async function tableExists(name) {
+  const r = await dbGet("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [name]);
+  return !!r;
+}
+async function tableCols(name) {
+  try {
+    const cols = await dbAll(`PRAGMA table_info(${name})`);
+    return new Set((cols || []).map(c => c && c.name).filter(Boolean));
+  } catch (_) { return new Set(); }
+}
+async function ensureFlags() {
+  if (FLAGS_READY) return;
+  const movCols = await tableCols("inventario_movimientos");
+  HAS_MOV_PRECIO_UNITARIO = movCols.has("precio_unitario");
+  HAS_PRESTAMOS_TABLE = await tableExists("inventario_prestamos");
+  if (HAS_PRESTAMOS_TABLE) {
+    const pCols = await tableCols("inventario_prestamos");
+    P_HAS_NOTA = pCols.has("nota");
+    P_HAS_CANT_DEV = pCols.has("cantidad_devuelta");
+    P_HAS_FECHA_DEV = pCols.has("fecha_devolucion");
+  }
+  FLAGS_READY = true;
+}
+
+function precioExpr(alias = "m") {
+  return HAS_MOV_PRECIO_UNITARIO ? `COALESCE(${alias}.precio_unitario,0)` : "0";
+}
+
 async function getStockActual(item_id) {
+  await ensureFlags();
   const row = await dbGet(
-    `
-    SELECT
-      COALESCE(SUM(
-        CASE
-          WHEN tipo = 'Ingreso' THEN cantidad
-          WHEN tipo = 'Salida' THEN -cantidad
-          WHEN tipo = 'Ajuste' THEN cantidad
-          ELSE 0
-        END
-      ), 0) AS stock_actual
-    FROM inventario_movimientos
-    WHERE item_id = ?
-    `,
-    [item_id]
-  );
-  return row ? Number(row.stock_actual || 0) : 0;
+    `SELECT COALESCE(SUM(
+      CASE
+        WHEN tipo IN ('Ingreso','Devolucion') THEN cantidad
+        WHEN tipo IN ('Salida','Prestamo','Venta') THEN -cantidad
+        WHEN tipo = 'Ajuste' THEN cantidad
+        ELSE 0
+      END
+    ), 0) AS stock
+    FROM inventario_movimientos WHERE item_id = ?`, [item_id]);
+  return row ? Number(row.stock || 0) : 0;
 }
 
-async function getItemById(item_id) {
-  return await dbGet(
-    `
-    SELECT id, producto, categoria, unidad, stock_minimo, estado
-    FROM inventario_items
-    WHERE id = ?
-    `,
-    [item_id]
-  );
+async function getItemById(id) {
+  return dbGet(`SELECT id, producto, categoria, unidad, stock_minimo, estado FROM inventario_items WHERE id = ?`, [id]);
 }
 
-async function validateCursoIfProvided(curso_id) {
-  if (curso_id === null || curso_id === undefined) return { ok: true };
-  const row = await dbGet(`SELECT id FROM cursos WHERE id = ?`, [curso_id]);
-  if (!row) return { ok: false, code: 400, error: "curso_id no existe" };
-  return { ok: true };
+// Construye INSERT para movimientos compatible con ambas versiones de DB
+async function insertMovimiento({ item_id, fecha, tipo, cantidad, costo_unitario, precio_unitario, motivo, curso_id, instructor_id }) {
+  await ensureFlags();
+  const tipoNorm = normalizeTipo(tipo);
+  if (HAS_MOV_PRECIO_UNITARIO) {
+    return dbRun(
+      `INSERT INTO inventario_movimientos (item_id,fecha,tipo,cantidad,costo_unitario,precio_unitario,motivo,curso_id,instructor_id,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
+      [item_id, fecha, tipoNorm, cantidad, costo_unitario ?? 0, precio_unitario ?? 0, motivo, curso_id ?? null, instructor_id ?? null]
+    );
+  } else {
+    return dbRun(
+      `INSERT INTO inventario_movimientos (item_id,fecha,tipo,cantidad,costo_unitario,motivo,curso_id,instructor_id,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
+      [item_id, fecha, tipoNorm, cantidad, costo_unitario ?? 0, motivo, curso_id ?? null, instructor_id ?? null]
+    );
+  }
 }
 
-async function validateInstructorIfProvided(instructor_id) {
-  if (instructor_id === null || instructor_id === undefined) return { ok: true };
-  const row = await dbGet(`SELECT id FROM instructores WHERE id = ?`, [instructor_id]);
-  if (!row) return { ok: false, code: 400, error: "instructor_id no existe" };
-  return { ok: true };
-}
-
-// ===============================
-// ITEMS
-// ===============================
+// ==========================
+// ITEMS CRUD
+// ==========================
 
 // GET /api/inventario/items
 router.get("/items", async (req, res) => {
   try {
     const q = normStr(req.query.q);
     const estado = normStr(req.query.estado);
-
-    const limit = Math.max(1, toInt(req.query.limit, 50) ?? 50);
+    const limit = Math.max(1, toInt(req.query.limit, 500) ?? 500);
     const offset = Math.max(0, toInt(req.query.offset, 0) ?? 0);
-
-    const where = [];
-    const params = [];
-
+    const where = [], params = [];
     if (estado) {
-      if (!ITEM_ESTADOS.has(estado)) {
-        return res.status(400).json({ ok: false, error: "estado inválido (Activo|Inactivo)" });
-      }
-      where.push("it.estado = ?");
-      params.push(estado);
+      if (!ITEM_ESTADOS.has(estado)) return res.status(400).json({ ok: false, error: "estado inválido" });
+      where.push("it.estado = ?"); params.push(estado);
     }
-
-    if (q) {
-      where.push("(it.producto LIKE ? OR it.categoria LIKE ?)");
-      params.push(likeWrap(q), likeWrap(q));
-    }
-
-    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-    const totalRow = await dbGet(
-      `SELECT COUNT(*) AS total FROM inventario_items it ${whereSql}`,
-      params
-    );
-    const total = totalRow ? Number(totalRow.total || 0) : 0;
-
+    if (q) { where.push("(it.producto LIKE ? OR it.categoria LIKE ?)"); params.push(likeWrap(q), likeWrap(q)); }
+    const wh = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const rows = await dbAll(
-      `
-      SELECT
-        it.id, it.producto, it.categoria, it.unidad, it.stock_minimo, it.estado,
-        COALESCE(m.stock_actual, 0) AS stock_actual
-      FROM inventario_items it
-      LEFT JOIN (
-        SELECT
-          item_id,
-          COALESCE(SUM(
-            CASE
-              WHEN tipo='Ingreso' THEN cantidad
-              WHEN tipo='Salida' THEN -cantidad
-              WHEN tipo='Ajuste' THEN cantidad
-              ELSE 0
-            END
-          ), 0) AS stock_actual
-        FROM inventario_movimientos
-        GROUP BY item_id
-      ) m ON m.item_id = it.id
-      ${whereSql}
-      ORDER BY it.id DESC
-      LIMIT ? OFFSET ?
-      `,
-      [...params, limit, offset]
-    );
-
-    return res.json({ ok: true, data: rows, meta: { limit, offset, total } });
+      `SELECT it.id, it.producto, it.categoria, it.unidad, it.stock_minimo, it.estado,
+        COALESCE((SELECT SUM(CASE WHEN m.tipo IN ('Ingreso','Devolucion') THEN m.cantidad WHEN m.tipo IN ('Salida','Prestamo','Venta') THEN -m.cantidad WHEN m.tipo='Ajuste' THEN m.cantidad ELSE 0 END) FROM inventario_movimientos m WHERE m.item_id = it.id), 0) AS stock_actual
+      FROM inventario_items it ${wh} ORDER BY it.id DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset]);
+    return res.json({ ok: true, data: rows });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al listar items" });
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error listando items" });
+  }
+});
+
+// POST /api/inventario/items
+router.post("/items", adminOnly, async (req, res) => {
+  try {
+    const producto = normStr(req.body?.producto);
+    const categoria = normStr(req.body?.categoria);
+    const unidad = normStr(req.body?.unidad);
+    const stock_minimo = Math.max(0, toInt(req.body?.stock_minimo, 0) ?? 0);
+    const estado = normStr(req.body?.estado) || "Activo";
+    if (!producto) return res.status(400).json({ ok: false, error: "producto es obligatorio" });
+    if (!ITEM_ESTADOS.has(estado)) return res.status(400).json({ ok: false, error: "estado inválido" });
+    const r = await dbRun(
+      `INSERT INTO inventario_items (producto,categoria,unidad,stock_minimo,estado,created_at,updated_at) VALUES (?,?,?,?,?,datetime('now'),datetime('now'))`,
+      [producto, categoria, unidad, stock_minimo, estado]);
+    const item = await dbGet(`SELECT * FROM inventario_items WHERE id=?`, [r.lastID]);
+    return res.status(201).json({ ok: true, data: item });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error creando item" });
   }
 });
 
@@ -200,393 +202,372 @@ router.get("/items", async (req, res) => {
 router.get("/items/:id", async (req, res) => {
   try {
     const id = toInt(req.params.id, null);
-    if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
-
-    const item = await getItemById(id);
+    if (!id) return res.status(400).json({ ok: false, error: "id inválido" });
+    const item = await dbGet(
+      `SELECT it.id, it.producto, it.categoria, it.unidad, it.stock_minimo, it.estado,
+        COALESCE((SELECT SUM(CASE WHEN m.tipo IN ('Ingreso','Devolucion') THEN m.cantidad WHEN m.tipo IN ('Salida','Prestamo','Venta') THEN -m.cantidad WHEN m.tipo='Ajuste' THEN m.cantidad ELSE 0 END) FROM inventario_movimientos m WHERE m.item_id = it.id), 0) AS stock_actual
+      FROM inventario_items it WHERE it.id=?`, [id]);
     if (!item) return res.status(404).json({ ok: false, error: "Item no encontrado" });
-
-    const stock_actual = await getStockActual(id);
-    return res.json({ ok: true, data: { ...item, stock_actual } });
+    return res.json({ ok: true, data: item });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al obtener item" });
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error obteniendo item" });
   }
 });
 
-// POST /api/inventario/items (Admin)
-router.post("/items", adminOnly, async (req, res) => {
-  try {
-    const producto = normStr(req.body?.producto);
-    const categoria = normStr(req.body?.categoria);
-    const unidad = normStr(req.body?.unidad);
-    const stock_minimo = toInt(req.body?.stock_minimo, 0) ?? 0;
-    const estado = normStr(req.body?.estado) || "Activo";
-
-    if (!producto) return res.status(400).json({ ok: false, error: "producto es obligatorio" });
-    if (stock_minimo < 0) return res.status(400).json({ ok: false, error: "stock_minimo inválido (>= 0)" });
-    if (!ITEM_ESTADOS.has(estado)) return res.status(400).json({ ok: false, error: "estado inválido" });
-
-    const r = await dbRun(
-      `
-      INSERT INTO inventario_items (producto, categoria, unidad, stock_minimo, estado)
-      VALUES (?, ?, ?, ?, ?)
-      `,
-      [producto, categoria, unidad, stock_minimo, estado]
-    );
-
-    const created = await getItemById(r.lastID);
-    const stock_actual = await getStockActual(r.lastID);
-
-    return res.status(201).json({ ok: true, data: { ...created, stock_actual } });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al crear item" });
-  }
-});
-
-// PUT /api/inventario/items/:id (Admin)
+// PUT /api/inventario/items/:id
 router.put("/items/:id", adminOnly, async (req, res) => {
   try {
     const id = toInt(req.params.id, null);
-    if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
-
-    const current = await getItemById(id);
-    if (!current) return res.status(404).json({ ok: false, error: "Item no encontrado" });
-
-    const producto = req.body?.producto !== undefined ? normStr(req.body.producto) : current.producto;
-    const categoria = req.body?.categoria !== undefined ? normStr(req.body.categoria) : current.categoria;
-    const unidad = req.body?.unidad !== undefined ? normStr(req.body.unidad) : current.unidad;
-    const stock_minimo =
-      req.body?.stock_minimo !== undefined ? toInt(req.body.stock_minimo, null) : Number(current.stock_minimo || 0);
-    const estado = req.body?.estado !== undefined ? normStr(req.body.estado) : current.estado;
-
-    if (!producto) return res.status(400).json({ ok: false, error: "producto no puede quedar vacío" });
-    if (stock_minimo === null || stock_minimo < 0) return res.status(400).json({ ok: false, error: "stock_minimo inválido" });
+    if (!id) return res.status(400).json({ ok: false, error: "id inválido" });
+    const existing = await getItemById(id);
+    if (!existing) return res.status(404).json({ ok: false, error: "Item no encontrado" });
+    const producto = normStr(req.body?.producto) ?? existing.producto;
+    const categoria = normStr(req.body?.categoria) ?? existing.categoria;
+    const unidad = normStr(req.body?.unidad) ?? existing.unidad;
+    const stock_minimo = req.body?.stock_minimo !== undefined ? Math.max(0, toInt(req.body.stock_minimo, 0) ?? 0) : existing.stock_minimo;
+    const estado = normStr(req.body?.estado) ?? existing.estado;
+    if (!producto) return res.status(400).json({ ok: false, error: "producto es obligatorio" });
     if (!ITEM_ESTADOS.has(estado)) return res.status(400).json({ ok: false, error: "estado inválido" });
-
     await dbRun(
-      `
-      UPDATE inventario_items
-      SET producto = ?, categoria = ?, unidad = ?, stock_minimo = ?, estado = ?
-      WHERE id = ?
-      `,
-      [producto, categoria, unidad, stock_minimo, estado, id]
-    );
-
-    const updated = await getItemById(id);
-    const stock_actual = await getStockActual(id);
-
-    return res.json({ ok: true, data: { ...updated, stock_actual } });
+      `UPDATE inventario_items SET producto=?,categoria=?,unidad=?,stock_minimo=?,estado=?,updated_at=datetime('now') WHERE id=?`,
+      [producto, categoria, unidad, stock_minimo, estado, id]);
+    const updated = await dbGet(`SELECT * FROM inventario_items WHERE id=?`, [id]);
+    return res.json({ ok: true, data: updated });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al actualizar item" });
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error actualizando item" });
   }
 });
 
-// DELETE /api/inventario/items/:id (Admin) -> soft delete
+// DELETE /api/inventario/items/:id (inactivar)
 router.delete("/items/:id", adminOnly, async (req, res) => {
   try {
     const id = toInt(req.params.id, null);
-    if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
-
-    const exists = await getItemById(id);
-    if (!exists) return res.status(404).json({ ok: false, error: "Item no encontrado" });
-
-    await dbRun(`UPDATE inventario_items SET estado = 'Inactivo' WHERE id = ?`, [id]);
+    if (!id) return res.status(400).json({ ok: false, error: "id inválido" });
+    const existing = await getItemById(id);
+    if (!existing) return res.status(404).json({ ok: false, error: "Item no encontrado" });
+    await dbRun(`UPDATE inventario_items SET estado='Inactivo', updated_at=datetime('now') WHERE id=?`, [id]);
     return res.json({ ok: true });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al inactivar item" });
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error eliminando item" });
   }
 });
 
-// ===============================
-// MOVIMIENTOS
-// ===============================
-
-// POST /api/inventario/movimientos (Admin)
-router.post("/movimientos", adminOnly, async (req, res) => {
-  try {
-    const item_id = toInt(req.body?.item_id, null);
-    const fecha = normStr(req.body?.fecha) || todayISO();
-    let tipo = normStr(req.body?.tipo);
-    let cantidad = toInt(req.body?.cantidad, null);
-    const costo_unitario = toNum(req.body?.costo_unitario, null);
-    const motivo = normStr(req.body?.motivo);
-
-    const curso_id = req.body?.curso_id !== undefined ? toInt(req.body.curso_id, null) : null;
-    const instructor_id = req.body?.instructor_id !== undefined ? toInt(req.body.instructor_id, null) : null;
-
-    if (!item_id) return res.status(400).json({ ok: false, error: "item_id es obligatorio" });
-    if (!isISODate(fecha)) return res.status(400).json({ ok: false, error: "fecha inválida (YYYY-MM-DD)" });
-    if (!tipo || !MOV_TIPOS.has(tipo)) return res.status(400).json({ ok: false, error: "tipo inválido (Ingreso|Salida|Ajuste)" });
-
-    // ✅ Ajuste puede ser positivo o negativo (tu schema lo permite: cantidad <> 0)
-    if (cantidad === null || cantidad === 0) return res.status(400).json({ ok: false, error: "cantidad no puede ser 0" });
-
-    // ✅ Normalizamos tipo "Entrada" -> "Ingreso" y guardamos en DB como "Ingreso"
-    tipo = normalizeTipo(tipo);
-
-    const item = await getItemById(item_id);
-    if (!item) return res.status(400).json({ ok: false, error: "item_id no existe" });
-    if (item.estado !== "Activo") return res.status(400).json({ ok: false, error: "El item debe estar Activo" });
-
-    const cCheck = await validateCursoIfProvided(curso_id);
-    if (!cCheck.ok) return res.status(cCheck.code).json({ ok: false, error: cCheck.error });
-
-    const iCheck = await validateInstructorIfProvided(instructor_id);
-    if (!iCheck.ok) return res.status(iCheck.code).json({ ok: false, error: iCheck.error });
-
-    await dbRun("BEGIN");
-    try {
-      const stockActual = await getStockActual(item_id);
-
-      // Stock nuevo según regla:
-      // Ingreso suma
-      // Salida resta
-      // Ajuste suma (puede ser negativo)
-      const delta =
-        tipo === "Ingreso" ? Math.abs(cantidad) :
-        tipo === "Salida" ? -Math.abs(cantidad) :
-        // Ajuste: se respeta signo
-        cantidad;
-
-      const stockNuevo = stockActual + delta;
-
-      if (stockNuevo < 0) {
-        await dbRun("ROLLBACK");
-        return res.status(409).json({ ok: false, error: "Movimiento inválido: dejaría stock negativo" });
-      }
-
-      const r = await dbRun(
-        `
-        INSERT INTO inventario_movimientos
-          (item_id, fecha, tipo, cantidad, costo_unitario, motivo, curso_id, instructor_id)
-        VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-        [item_id, fecha, tipo, delta, costo_unitario, motivo, curso_id, instructor_id]
-      );
-
-      await dbRun("COMMIT");
-
-      const created = await dbGet(
-        `
-        SELECT
-          m.id, m.item_id, m.fecha, m.tipo, m.cantidad, m.costo_unitario, m.motivo, m.curso_id, m.instructor_id,
-          it.producto AS item_producto,
-          c.nombre AS curso_nombre,
-          ins.nombre AS instructor_nombre
-        FROM inventario_movimientos m
-        JOIN inventario_items it ON it.id = m.item_id
-        LEFT JOIN cursos c ON c.id = m.curso_id
-        LEFT JOIN instructores ins ON ins.id = m.instructor_id
-        WHERE m.id = ?
-        `,
-        [r.lastID]
-      );
-
-      const stock_actual = await getStockActual(item_id);
-      return res.status(201).json({ ok: true, data: { ...created, stock_actual } });
-    } catch (e) {
-      await dbRun("ROLLBACK");
-      throw e;
-    }
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al registrar movimiento" });
-  }
-});
+// ==========================
+// MOVIMIENTOS (KARDEX)
+// ==========================
 
 // GET /api/inventario/movimientos
 router.get("/movimientos", async (req, res) => {
   try {
+    await ensureFlags();
     const item_id = toInt(req.query.item_id, null);
-    const curso_id = toInt(req.query.curso_id, null);
-    const instructor_id = toInt(req.query.instructor_id, null);
     const tipo = normStr(req.query.tipo);
     const desde = normStr(req.query.desde);
     const hasta = normStr(req.query.hasta);
-
-    const where = [];
-    const params = [];
-
-    if (item_id !== null) { where.push("m.item_id = ?"); params.push(item_id); }
-    if (curso_id !== null) { where.push("m.curso_id = ?"); params.push(curso_id); }
-    if (instructor_id !== null) { where.push("m.instructor_id = ?"); params.push(instructor_id); }
-
-    if (tipo) {
-      // Acepta "Entrada" pero filtra como "Ingreso"
-      const t = normalizeTipo(tipo);
-      if (!MOV_TIPOS.has(tipo) && !MOV_TIPOS.has(t)) {
-        return res.status(400).json({ ok: false, error: "tipo inválido" });
-      }
-      where.push("m.tipo = ?");
-      params.push(t);
-    }
-
-    if (desde || hasta) {
-      const d = desde || "0000-01-01";
-      const h = hasta || "9999-12-31";
-      if (desde && !isISODate(desde)) return res.status(400).json({ ok: false, error: "desde inválido" });
-      if (hasta && !isISODate(hasta)) return res.status(400).json({ ok: false, error: "hasta inválido" });
-      where.push("m.fecha BETWEEN ? AND ?");
-      params.push(d, h);
-    }
-
-    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
+    if (tipo && !MOV_TIPOS.has(tipo)) return res.status(400).json({ ok: false, error: "tipo inválido" });
+    if (desde && !isISODate(desde)) return res.status(400).json({ ok: false, error: "desde inválido" });
+    if (hasta && !isISODate(hasta)) return res.status(400).json({ ok: false, error: "hasta inválido" });
+    const where = [], params = [];
+    if (item_id) { where.push("m.item_id = ?"); params.push(item_id); }
+    if (tipo) { where.push("m.tipo = ?"); params.push(normalizeTipo(tipo)); }
+    if (desde) { where.push("m.fecha >= ?"); params.push(desde); }
+    if (hasta) { where.push("m.fecha <= ?"); params.push(hasta); }
+    const wh = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const rows = await dbAll(
-      `
-      SELECT
-        m.id, m.item_id, m.fecha, m.tipo, m.cantidad, m.costo_unitario, m.motivo, m.curso_id, m.instructor_id,
-        it.producto AS item_producto,
-        c.nombre AS curso_nombre,
-        ins.nombre AS instructor_nombre
+      `SELECT m.id, m.item_id, m.fecha, m.tipo, m.cantidad, m.costo_unitario,
+        ${precioExpr("m")} AS precio_unitario,
+        m.motivo, m.curso_id, m.instructor_id,
+        it.producto AS item_producto, c.nombre AS curso_nombre, ins.nombre AS instructor_nombre
       FROM inventario_movimientos m
       JOIN inventario_items it ON it.id = m.item_id
       LEFT JOIN cursos c ON c.id = m.curso_id
       LEFT JOIN instructores ins ON ins.id = m.instructor_id
-      ${whereSql}
-      ORDER BY m.fecha DESC, m.id DESC
-      `,
-      params
-    );
-
+      ${wh} ORDER BY m.fecha DESC, m.id DESC LIMIT 2000`, params);
     return res.json({ ok: true, data: rows });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al listar movimientos" });
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error listando movimientos" });
   }
 });
 
-// GET /api/inventario/items/:id/stock
-router.get("/items/:id/stock", async (req, res) => {
+// POST /api/inventario/movimientos (ingreso/ajuste)
+router.post("/movimientos", adminOnly, async (req, res) => {
   try {
-    const id = toInt(req.params.id, null);
-    if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
-
-    const item = await getItemById(id);
+    await ensureFlags();
+    const item_id = toInt(req.body?.item_id, null);
+    const tipo = normStr(req.body?.tipo) || "Ingreso";
+    const cantidad = toInt(req.body?.cantidad, null);
+    const costo_unitario = Math.max(0, toNum(req.body?.costo_unitario, 0) ?? 0);
+    const fecha = normStr(req.body?.fecha) || todayISO();
+    const motivo = normStr(req.body?.motivo);
+    const curso_id = toInt(req.body?.curso_id, null);
+    const instructor_id = toInt(req.body?.instructor_id, null);
+    if (!item_id) return res.status(400).json({ ok: false, error: "item_id obligatorio" });
+    if (!MOV_TIPOS.has(tipo)) return res.status(400).json({ ok: false, error: "tipo inválido" });
+    if (!cantidad || cantidad <= 0) return res.status(400).json({ ok: false, error: "cantidad inválida" });
+    if (!isISODate(fecha)) return res.status(400).json({ ok: false, error: "fecha inválida" });
+    const item = await getItemById(item_id);
     if (!item) return res.status(404).json({ ok: false, error: "Item no encontrado" });
-
-    const stock_actual = await getStockActual(id);
-    const stock_minimo = Number(item.stock_minimo || 0);
-    const alerta = stock_actual <= stock_minimo;
-
-    return res.json({ ok: true, data: { stock_actual, stock_minimo, alerta } });
+    if (["Salida","Prestamo","Venta"].includes(tipo)) {
+      const stock = await getStockActual(item_id);
+      if (stock - cantidad < 0) return res.status(400).json({ ok: false, error: `Stock insuficiente (${stock} disponibles)` });
+    }
+    const r = await insertMovimiento({ item_id, fecha, tipo, cantidad, costo_unitario, precio_unitario: 0, motivo, curso_id, instructor_id });
+    return res.status(201).json({ ok: true, id: r.lastID });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al obtener stock" });
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error registrando movimiento: " + err.message });
   }
 });
 
-// GET /api/inventario/alertas
+// ==========================
+// ALERTAS
+// ==========================
+
 router.get("/alertas", async (req, res) => {
   try {
     const rows = await dbAll(
-      `
-      SELECT
-        it.id, it.producto, it.categoria, it.unidad, it.stock_minimo, it.estado,
-        COALESCE(m.stock_actual, 0) AS stock_actual
-      FROM inventario_items it
-      LEFT JOIN (
-        SELECT
-          item_id,
-          COALESCE(SUM(
-            CASE
-              WHEN tipo='Ingreso' THEN cantidad
-              WHEN tipo='Salida' THEN -cantidad
-              WHEN tipo='Ajuste' THEN cantidad
-              ELSE 0
-            END
-          ), 0) AS stock_actual
-        FROM inventario_movimientos
-        GROUP BY item_id
-      ) m ON m.item_id = it.id
-      WHERE it.estado = 'Activo'
-        AND COALESCE(m.stock_actual, 0) <= COALESCE(it.stock_minimo, 0)
-      ORDER BY (COALESCE(it.stock_minimo, 0) - COALESCE(m.stock_actual, 0)) DESC, it.id DESC
-      `
-    );
+      `SELECT * FROM (
+        SELECT it.id, it.producto, it.categoria, it.unidad, it.stock_minimo, it.estado,
+          COALESCE((SELECT SUM(CASE WHEN m.tipo IN ('Ingreso','Devolucion') THEN m.cantidad WHEN m.tipo IN ('Salida','Prestamo','Venta') THEN -m.cantidad WHEN m.tipo='Ajuste' THEN m.cantidad ELSE 0 END) FROM inventario_movimientos m WHERE m.item_id = it.id), 0) AS stock_actual
+        FROM inventario_items it WHERE it.estado='Activo'
+      ) t WHERE t.stock_actual <= t.stock_minimo ORDER BY t.stock_actual ASC, t.producto ASC LIMIT 500`);
     return res.json({ ok: true, data: rows });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al obtener alertas" });
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error listando alertas" });
   }
 });
 
-// GET /api/inventario/resumen
+// ==========================
+// RESUMEN (por_curso + por_instructor)
+// ==========================
+
 router.get("/resumen", async (req, res) => {
   try {
+    await ensureFlags();
     const desde = normStr(req.query.desde);
     const hasta = normStr(req.query.hasta);
+    if (desde && !isISODate(desde)) return res.status(400).json({ ok: false, error: "desde inválido" });
+    if (hasta && !isISODate(hasta)) return res.status(400).json({ ok: false, error: "hasta inválido" });
+    const where = [], params = [];
+    if (desde) { where.push("m.fecha >= ?"); params.push(desde); }
+    if (hasta) { where.push("m.fecha <= ?"); params.push(hasta); }
+    const wh = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-    const d = desde || "0000-01-01";
-    const h = hasta || "9999-12-31";
-
-    if (desde && !isISODate(desde)) return res.status(400).json({ ok: false, error: "desde inválido (YYYY-MM-DD)" });
-    if (hasta && !isISODate(hasta)) return res.status(400).json({ ok: false, error: "hasta inválido (YYYY-MM-DD)" });
-
-    const totales = await dbGet(
-      `
-      SELECT
-        COALESCE(SUM(CASE WHEN tipo='Ingreso' THEN cantidad ELSE 0 END), 0) AS total_ingresos,
-        COALESCE(SUM(CASE WHEN tipo='Salida' THEN ABS(cantidad) ELSE 0 END), 0) AS total_salidas,
-        COALESCE(SUM(CASE WHEN tipo='Salida' THEN ABS(cantidad) * COALESCE(costo_unitario,0) ELSE 0 END), 0) AS costo_salidas
-      FROM inventario_movimientos
-      WHERE fecha BETWEEN ? AND ?
-      `,
-      [d, h]
-    );
-
-    const porCurso = await dbAll(
-      `
-      SELECT
-        m.curso_id,
-        c.nombre AS curso_nombre,
-        COALESCE(SUM(ABS(m.cantidad) * COALESCE(m.costo_unitario, 0)), 0) AS costo_total
+    const movimientos = await dbAll(
+      `SELECT m.id, m.item_id, m.fecha, m.tipo, m.cantidad, m.costo_unitario,
+        ${precioExpr("m")} AS precio_unitario,
+        m.motivo, m.curso_id, m.instructor_id,
+        it.producto AS item_producto, c.nombre AS curso_nombre, ins.nombre AS instructor_nombre
       FROM inventario_movimientos m
+      JOIN inventario_items it ON it.id = m.item_id
       LEFT JOIN cursos c ON c.id = m.curso_id
-      WHERE m.fecha BETWEEN ? AND ?
-        AND m.tipo = 'Salida'
-        AND m.curso_id IS NOT NULL
-      GROUP BY m.curso_id
-      ORDER BY costo_total DESC
-      `,
-      [d, h]
-    );
-
-    const porInstructor = await dbAll(
-      `
-      SELECT
-        m.instructor_id,
-        ins.nombre AS instructor_nombre,
-        COALESCE(SUM(ABS(m.cantidad) * COALESCE(m.costo_unitario, 0)), 0) AS costo_total
-      FROM inventario_movimientos m
       LEFT JOIN instructores ins ON ins.id = m.instructor_id
-      WHERE m.fecha BETWEEN ? AND ?
-        AND m.tipo = 'Salida'
-        AND m.instructor_id IS NOT NULL
-      GROUP BY m.instructor_id
-      ORDER BY costo_total DESC
-      `,
-      [d, h]
-    );
+      ${wh} ORDER BY m.fecha DESC, m.id DESC LIMIT 5000`, params);
+
+    const DESCUENTAN = ["Salida", "Prestamo", "Venta"];
+    const porCursoMap = {}, porInstructorMap = {};
+    for (const m of movimientos) {
+      if (!DESCUENTAN.includes(m.tipo)) continue;
+      const cant = Number(m.cantidad || 0);
+      if (m.curso_id) {
+        if (!porCursoMap[m.curso_id]) porCursoMap[m.curso_id] = { curso_id: m.curso_id, curso_nombre: m.curso_nombre || "Sin nombre", salidas: 0 };
+        porCursoMap[m.curso_id].salidas += cant;
+      }
+      if (m.instructor_id) {
+        if (!porInstructorMap[m.instructor_id]) porInstructorMap[m.instructor_id] = { instructor_id: m.instructor_id, instructor_nombre: m.instructor_nombre || "Sin nombre", salidas: 0 };
+        porInstructorMap[m.instructor_id].salidas += cant;
+      }
+    }
 
     return res.json({
       ok: true,
       data: {
-        desde: d,
-        hasta: h,
-        total_ingresos: Number(totales?.total_ingresos || 0),
-        total_salidas: Number(totales?.total_salidas || 0),
-        costo_salidas: Number(totales?.costo_salidas || 0),
-        costo_total_por_curso: porCurso.map((r) => ({
-          curso_id: r.curso_id,
-          curso_nombre: r.curso_nombre,
-          costo_total: Number(r.costo_total || 0),
-        })),
-        costo_total_por_instructor: porInstructor.map((r) => ({
-          instructor_id: r.instructor_id,
-          instructor_nombre: r.instructor_nombre,
-          costo_total: Number(r.costo_total || 0),
-        })),
-      },
+        movimientos,
+        por_curso: Object.values(porCursoMap).sort((a, b) => b.salidas - a.salidas),
+        por_instructor: Object.values(porInstructorMap).sort((a, b) => b.salidas - a.salidas)
+      }
     });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al obtener resumen de inventario" });
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error generando resumen" });
+  }
+});
+
+// ==========================
+// VENTAS
+// ==========================
+
+// GET /api/inventario/ventas/resumen
+router.get("/ventas/resumen", async (req, res) => {
+  try {
+    await ensureFlags();
+    const desde = normStr(req.query.desde);
+    const hasta = normStr(req.query.hasta);
+    if (desde && !isISODate(desde)) return res.status(400).json({ ok: false, error: "desde inválido" });
+    if (hasta && !isISODate(hasta)) return res.status(400).json({ ok: false, error: "hasta inválido" });
+    const where = ["m.tipo = 'Venta'"], params = [];
+    if (desde) { where.push("m.fecha >= ?"); params.push(desde); }
+    if (hasta) { where.push("m.fecha <= ?"); params.push(hasta); }
+    const row = await dbGet(
+      `SELECT COUNT(*) AS total_ventas, COALESCE(SUM(m.cantidad * (${precioExpr("m")})), 0) AS monto_ventas
+       FROM inventario_movimientos m WHERE ${where.join(" AND ")}`, params);
+    return res.json({ ok: true, data: row || { total_ventas: 0, monto_ventas: 0 } });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error resumen ventas" });
+  }
+});
+
+// POST /api/inventario/ventas
+router.post("/ventas", adminOnly, async (req, res) => {
+  try {
+    await ensureFlags();
+    const item_id = toInt(req.body?.item_id, null);
+    const cantidad = toInt(req.body?.cantidad, null);
+    const precio_unitario = Math.max(0, toNum(req.body?.precio_unitario, 0) ?? 0);
+    const fecha = normStr(req.body?.fecha) || todayISO();
+    const nota = normStr(req.body?.nota) || "Venta";
+    const curso_id = toInt(req.body?.curso_id, null);
+    const instructor_id = toInt(req.body?.instructor_id, null);
+    if (!item_id) return res.status(400).json({ ok: false, error: "item_id obligatorio" });
+    if (!cantidad || cantidad <= 0) return res.status(400).json({ ok: false, error: "cantidad inválida" });
+    if (!isISODate(fecha)) return res.status(400).json({ ok: false, error: "fecha inválida" });
+    const item = await getItemById(item_id);
+    if (!item) return res.status(404).json({ ok: false, error: "Item no encontrado" });
+    const stock = await getStockActual(item_id);
+    if (stock - cantidad < 0) return res.status(400).json({ ok: false, error: `Stock insuficiente (${stock} disponibles)` });
+    const r = await insertMovimiento({ item_id, fecha, tipo: "Venta", cantidad, costo_unitario: 0, precio_unitario, motivo: nota, curso_id, instructor_id });
+    return res.status(201).json({ ok: true, id: r.lastID });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error registrando venta: " + err.message });
+  }
+});
+
+// ==========================
+// PRÉSTAMOS
+// ==========================
+
+router.get("/prestamos", async (req, res) => {
+  try {
+    await ensureFlags();
+    if (!HAS_PRESTAMOS_TABLE) return res.json({ ok: true, data: [] });
+    const estado = normStr(req.query.estado);
+    const where = [], params = [];
+    if (estado) { where.push("p.estado = ?"); params.push(estado); }
+    const wh = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const notaSel = P_HAS_NOTA ? "COALESCE(p.nota,'') AS nota" : "'' AS nota";
+    const cantDevSel = P_HAS_CANT_DEV ? "COALESCE(p.cantidad_devuelta,0) AS cantidad_devuelta" : "0 AS cantidad_devuelta";
+    const fechaDevSel = P_HAS_FECHA_DEV ? "p.fecha_devolucion AS fecha_devolucion" : "NULL AS fecha_devolucion";
+    const rows = await dbAll(
+      `SELECT p.id, p.item_id, p.cantidad, p.instructor_id, p.curso_id, p.fecha,
+        ${notaSel}, p.estado, ${cantDevSel}, ${fechaDevSel},
+        it.producto AS item_producto, c.nombre AS curso_nombre, ins.nombre AS instructor_nombre
+      FROM inventario_prestamos p
+      JOIN inventario_items it ON it.id = p.item_id
+      LEFT JOIN cursos c ON c.id = p.curso_id
+      LEFT JOIN instructores ins ON ins.id = p.instructor_id
+      ${wh} ORDER BY p.estado ASC, p.fecha DESC, p.id DESC LIMIT 2000`, params);
+    return res.json({ ok: true, data: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error listando préstamos" });
+  }
+});
+
+router.post("/prestamos", adminOnly, async (req, res) => {
+  try {
+    await ensureFlags();
+    const item_id = toInt(req.body?.item_id, null);
+    const cantidad = toInt(req.body?.cantidad, null);
+    const instructor_id = toInt(req.body?.instructor_id, null);
+    const curso_id = toInt(req.body?.curso_id, null);
+    const fecha = normStr(req.body?.fecha) || todayISO();
+    const nota = normStr(req.body?.nota) || "Préstamo en clase";
+    const costo_unitario = Math.max(0, toNum(req.body?.costo_unitario, 0) ?? 0);
+    if (!item_id) return res.status(400).json({ ok: false, error: "item_id obligatorio" });
+    if (!cantidad || cantidad <= 0) return res.status(400).json({ ok: false, error: "cantidad inválida" });
+    if (!instructor_id) return res.status(400).json({ ok: false, error: "instructor_id obligatorio" });
+    if (!isISODate(fecha)) return res.status(400).json({ ok: false, error: "fecha inválida" });
+    const item = await getItemById(item_id);
+    if (!item) return res.status(404).json({ ok: false, error: "Item no encontrado" });
+    const stock = await getStockActual(item_id);
+    if (stock - cantidad < 0) return res.status(400).json({ ok: false, error: `Stock insuficiente (${stock} disponibles)` });
+
+    await dbRun("BEGIN IMMEDIATE");
+    try {
+      const movR = await insertMovimiento({ item_id, fecha, tipo: "Prestamo", cantidad, costo_unitario, precio_unitario: 0, motivo: nota, curso_id, instructor_id });
+      let prestamoId = null;
+      if (HAS_PRESTAMOS_TABLE) {
+        const r2 = await dbRun(
+          `INSERT INTO inventario_prestamos (item_id,cantidad,instructor_id,curso_id,fecha,${P_HAS_NOTA?"nota,":""}estado,${P_HAS_CANT_DEV?"cantidad_devuelta,":""}created_at,updated_at)
+           VALUES (?,?,?,?,?,${P_HAS_NOTA?"?,":""}'Pendiente',${P_HAS_CANT_DEV?"0,":""}datetime('now'),datetime('now'))`,
+          [item_id, cantidad, instructor_id, curso_id, fecha, ...(P_HAS_NOTA ? [nota] : [])]);
+        prestamoId = r2.lastID;
+      }
+      await dbRun("COMMIT");
+      return res.status(201).json({ ok: true, id: prestamoId || movR.lastID });
+    } catch (e) {
+      await dbRun("ROLLBACK").catch(() => {});
+      throw e;
+    }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error registrando préstamo: " + err.message });
+  }
+});
+
+router.post("/prestamos/:id/devolver", adminOnly, async (req, res) => {
+  try {
+    await ensureFlags();
+    if (!HAS_PRESTAMOS_TABLE) return res.status(500).json({ ok: false, error: "Tabla inventario_prestamos no existe" });
+    const id = toInt(req.params.id, null);
+    if (!id) return res.status(400).json({ ok: false, error: "id inválido" });
+    const fecha = normStr(req.body?.fecha) || todayISO();
+    const cantidad = toInt(req.body?.cantidad, null);
+    const nota = normStr(req.body?.nota) || "Devolución";
+    if (!isISODate(fecha)) return res.status(400).json({ ok: false, error: "fecha inválida" });
+    if (!cantidad || cantidad <= 0) return res.status(400).json({ ok: false, error: "cantidad inválida" });
+    const p = await dbGet(`SELECT * FROM inventario_prestamos WHERE id = ?`, [id]);
+    if (!p) return res.status(404).json({ ok: false, error: "Préstamo no encontrado" });
+    const total = Number(p.cantidad || 0);
+    if (!P_HAS_CANT_DEV) {
+      if (cantidad !== total) return res.status(400).json({ ok: false, error: "Debe devolver la cantidad completa." });
+    } else {
+      const pendiente = Math.max(0, total - Number(p.cantidad_devuelta || 0));
+      if (pendiente <= 0) return res.status(400).json({ ok: false, error: "Préstamo ya devuelto" });
+      if (cantidad > pendiente) return res.status(400).json({ ok: false, error: "Supera lo pendiente" });
+    }
+    await dbRun("BEGIN IMMEDIATE");
+    try {
+      await insertMovimiento({ item_id: p.item_id, fecha, tipo: "Devolucion", cantidad: Math.abs(cantidad), costo_unitario: 0, precio_unitario: 0, motivo: nota, curso_id: p.curso_id, instructor_id: p.instructor_id });
+      const sets = [], params = [];
+      if (P_HAS_CANT_DEV) {
+        const newDev = Number(p.cantidad_devuelta || 0) + Math.abs(cantidad);
+        const newEst = newDev >= total ? "Devuelto" : "Pendiente";
+        sets.push("cantidad_devuelta = ?"); params.push(newDev);
+        sets.push("estado = ?"); params.push(newEst);
+        if (P_HAS_FECHA_DEV) { sets.push("fecha_devolucion = CASE WHEN ?='Devuelto' THEN ? ELSE fecha_devolucion END"); params.push(newEst, fecha); }
+      } else {
+        sets.push("estado = 'Devuelto'");
+        if (P_HAS_FECHA_DEV) { sets.push("fecha_devolucion = ?"); params.push(fecha); }
+      }
+      sets.push("updated_at = datetime('now')");
+      await dbRun(`UPDATE inventario_prestamos SET ${sets.join(", ")} WHERE id = ?`, [...params, id]);
+      await dbRun("COMMIT");
+      return res.json({ ok: true });
+    } catch (e) {
+      await dbRun("ROLLBACK").catch(() => {});
+      throw e;
+    }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Error registrando devolución" });
   }
 });
 

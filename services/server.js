@@ -25,6 +25,12 @@ if (!db) {
   throw new Error("[DB] No se pudo cargar la conexión DB. Verifica src/db.js o db.js");
 }
 
+
+(async () => {
+  await ensureInventarioMigration(db);
+})();
+
+
 // ---------------- helpers ----------------
 function ensureDir(dirPath) {
   try { fs.mkdirSync(dirPath, { recursive: true }); } catch (_) {}
@@ -43,9 +49,102 @@ function dbGet(dbConn, sql, params = []) {
   });
 }
 
+function dbAll(dbConn, sql, params = []) {
+  return new Promise((resolve, reject) => {
+    dbConn.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows || [])));
+  });
+}
+function dbExec(dbConn, sql) {
+  return new Promise((resolve, reject) => {
+    dbConn.exec(sql, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
+async function ensureInventarioMigration(dbConn) {
+  try {
+    // 1) Ver definición SQL de inventario_movimientos para confirmar CHECK expandido
+    const movDef = await dbGet(
+      dbConn,
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='inventario_movimientos'"
+    );
+    const movSql = String(movDef?.sql || "");
+    const movOk = movSql.includes("Prestamo") && movSql.includes("Devolucion") && movSql.includes("Venta");
+
+    // 2) Ver si inventario_prestamos existe y tiene columna nota
+    const prestDef = await dbGet(
+      dbConn,
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='inventario_prestamos'"
+    );
+    let prestOk = false;
+    if (prestDef) {
+      const cols = await dbAll(dbConn, "PRAGMA table_info(inventario_prestamos)");
+      prestOk = cols.some(c => c && c.name === "nota");
+    }
+
+    if (movOk && prestOk) return;
+
+    // 3) Ejecutar migración SQL
+    const sqlPath = path.join(__dirname, "migrations", "2026_02_inventario_prestamo_venta.sql");
+    const sql = fs.readFileSync(sqlPath, "utf8");
+
+    console.log("[MIGRATION] Running inventario migration...");
+
+    // Si inventario_prestamos NO existe, evitamos que el SQL falle por ALTER RENAME:
+    // Ejecutamos una pre-creación mínima antes (si no existe)
+    if (!prestDef) {
+      await dbExec(dbConn, `
+        CREATE TABLE IF NOT EXISTS inventario_prestamos (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          item_id INTEGER NOT NULL,
+          cantidad INTEGER NOT NULL DEFAULT 0,
+          instructor_id INTEGER NOT NULL,
+          curso_id INTEGER,
+          fecha TEXT NOT NULL DEFAULT (date('now')),
+          nota TEXT,
+          estado TEXT NOT NULL DEFAULT 'Pendiente',
+          cantidad_devuelta INTEGER NOT NULL DEFAULT 0,
+          fecha_devolucion TEXT,
+          mov_salida_id INTEGER,
+          mov_devolucion_id INTEGER,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    }
+
+    await dbExec(dbConn, sql);
+    console.log("[MIGRATION] Inventario migration OK");
+  } catch (e) {
+    console.error("[MIGRATION] Failed:", e);
+  }
+}
+
+
 // ---------------- app ----------------
 const app = express();
 app.disable("x-powered-by");
+
+// ─── Security Headers ───
+app.use((req, res, next) => {
+  // Content-Security-Policy: solo recursos locales
+  res.setHeader(
+    "Content-Security-Policy",
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline'",        // unsafe-inline necesario para scripts inline actuales
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join("; ")
+  );
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  next();
+});
 
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));

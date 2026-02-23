@@ -1,5 +1,6 @@
 const express = require("express");
 const db = require("../db");
+const { syncCursosFinalizados } = require("../utils/syncEstados");
 const router = express.Router();
 
 // ================= HELPERS =================
@@ -36,27 +37,45 @@ function likeWrap(q) {
 
 // ================= GET =================
 router.get("/", async (req, res) => {
+  // Sincronizar estados antes de listar (actualiza instructores.estado automáticamente)
+  await syncCursosFinalizados().catch(e => console.error("[INSTRUCTORES][SYNC]", e));
+
   const q = String(req.query.q || "").trim();
   const estado = String(req.query.estado || "").trim();
 
-  let sql = `SELECT * FROM instructores WHERE 1=1`;
+  // Calculamos estado dinámicamente con subquery para máxima consistencia
+  let sql = `
+    SELECT
+      i.*,
+      CASE
+        WHEN EXISTS (
+          SELECT 1 FROM cursos c
+          WHERE c.instructor_id = i.id
+            AND c.estado IN ('Programado', 'En curso')
+        ) THEN 'Activo'
+        ELSE 'Inactivo'
+      END AS estado
+    FROM instructores i
+    WHERE 1=1
+  `;
   const params = [];
 
   if (q) {
-    sql += ` AND (nombre LIKE ? OR documento LIKE ?)`;
+    sql += ` AND (i.nombre LIKE ? OR i.documento LIKE ?)`;
     params.push(likeWrap(q), likeWrap(q));
   }
 
   if (estado) {
-    sql += ` AND estado = ?`;
-    params.push(estado);
+    // Filtramos en memoria o agregamos HAVING
+    // Para simplicidad, dejamos filtro en memoria abajo
   }
 
-  sql += ` ORDER BY id DESC`;
+  sql += ` ORDER BY i.id DESC`;
 
   try {
     const rows = await dbAll(sql, params);
-    res.json(rows);
+    const filtered = estado ? rows.filter(r => r.estado === estado) : rows;
+    res.json(filtered);
   } catch (err) {
     console.error("[INSTRUCTORES][GET]", err);
     res.status(500).json({ error: "Error al listar instructores" });

@@ -1,628 +1,721 @@
-// public/js/inventario.js (Materiales de clase)
+// public/js/inventario.js
 (() => {
   "use strict";
 
-async function fetchJSON(url, options = {}) {
-  options.credentials = "include";
-  const r = await fetch(url, options);
-
-  const ct = r.headers.get("content-type") || "";
-  const isJson = ct.includes("application/json");
-
-  if (!r.ok) {
-    let msg = `HTTP ${r.status}`;
-    try {
-      const body = isJson ? await r.json() : await r.text();
-      msg = body?.error || body?.message || body || msg;
-    } catch (_) {}
-    throw new Error(msg);
-  }
-  return isJson ? r.json() : null;
-}
-
-const bs = (n) => "Bs " + Number(n || 0).toFixed(2);
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c] || c));
-
-function pad2(n){ return String(n).padStart(2,"0"); }
-function todayISO(){
-  const d=new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
-}
-function monthStartISO(d=new Date()){
-  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-01`;
-}
-function nextMonthStartISO(d=new Date()){
-  return `${d.getFullYear()}-${pad2(d.getMonth()+2)}-01`;
-}
-
-// ===== Elements =====
-const btnReloadInv = document.getElementById("btnReloadInv");
-const msgInv = document.getElementById("msgInv");
-
-// KPIs
-const kpiItems = document.getElementById("kpiItems");
-const kpiAlertas = document.getElementById("kpiAlertas");
-const kpiConsumoMes = document.getElementById("kpiConsumoMes");
-const kpiCostoMes = document.getElementById("kpiCostoMes");
-
-// Items
-const itBuscar = document.getElementById("itBuscar");
-const itEstado = document.getElementById("itEstado");
-const btnFiltrarItems = document.getElementById("btnFiltrarItems");
-const itResumen = document.getElementById("itResumen");
-const tablaItemsBody = document.querySelector("#tablaItems tbody");
-
-// Kardex
-const kItem = document.getElementById("kItem");
-const kTipo = document.getElementById("kTipo");
-const kDesde = document.getElementById("kDesde");
-const kHasta = document.getElementById("kHasta");
-const btnFiltrarKardex = document.getElementById("btnFiltrarKardex");
-const kResumen = document.getElementById("kResumen");
-const tablaKardexBody = document.querySelector("#tablaKardex tbody");
-
-// Alertas
-const aResumen = document.getElementById("aResumen");
-const tablaAlertasBody = document.querySelector("#tablaAlertas tbody");
-
-// Resumen
-const rDesde = document.getElementById("rDesde");
-const rHasta = document.getElementById("rHasta");
-const btnResumen = document.getElementById("btnResumen");
-const rConsumo = document.getElementById("rConsumo");
-const rCosto = document.getElementById("rCosto");
-const tablaResumenCursoBody = document.querySelector("#tablaResumenCurso tbody");
-const tablaResumenInstructorBody = document.querySelector("#tablaResumenInstructor tbody");
-
-// Modal Item
-const formItem = document.getElementById("formItem");
-const itemTitle = document.getElementById("itemTitle");
-const itId = document.getElementById("itId");
-const itProducto = document.getElementById("itProducto");
-const itCategoria = document.getElementById("itCategoria");
-const itUnidad = document.getElementById("itUnidad");
-const itMin = document.getElementById("itMin");
-const itEstadoForm = document.getElementById("itEstadoForm");
-const msgItem = document.getElementById("msgItem");
-
-// Modal Consumo
-const formConsumo = document.getElementById("formConsumo");
-const csItem = document.getElementById("csItem");
-const csCant = document.getElementById("csCant");
-const csFecha = document.getElementById("csFecha");
-const csCurso = document.getElementById("csCurso");
-const csInstructor = document.getElementById("csInstructor");
-const csCosto = document.getElementById("csCosto");
-const csMotivo = document.getElementById("csMotivo");
-const msgConsumo = document.getElementById("msgConsumo");
-
-// Modal Ingreso
-const formIngreso = document.getElementById("formIngreso");
-const igItem = document.getElementById("igItem");
-const igCant = document.getElementById("igCant");
-const igFecha = document.getElementById("igFecha");
-const igCosto = document.getElementById("igCosto");
-const igMotivo = document.getElementById("igMotivo");
-const msgIngreso = document.getElementById("msgIngreso");
-
-// ===== Cache =====
-let itemsCache = [];
-let cursosCache = [];
-let instructoresCache = [];
-
-// ===== API =====
-async function apiListItems(params={}){
-  const sp = new URLSearchParams();
-  if (params.q) sp.set("q", params.q);
-  if (params.estado) sp.set("estado", params.estado);
-  sp.set("limit", params.limit ?? 500);
-  sp.set("offset", params.offset ?? 0);
-  const r = await fetchJSON(`/api/inventario/items?${sp.toString()}`);
-  return r?.data || [];
-}
-
-async function apiCreateItem(payload){
-  return fetchJSON("/api/inventario/items", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify(payload),
-  });
-}
-
-async function apiUpdateItem(id, payload){
-  return fetchJSON(`/api/inventario/items/${id}`, {
-    method:"PUT",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify(payload),
-  });
-}
-
-async function apiRemoveItem(id){
-  return fetchJSON(`/api/inventario/items/${id}`, { method:"DELETE" });
-}
-
-async function apiCreateMovimiento(payload){
-  return fetchJSON("/api/inventario/movimientos", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify(payload),
-  });
-}
-
-async function apiListMovimientos(params={}){
-  const sp = new URLSearchParams();
-  for (const [k,v] of Object.entries(params)){
-    if (v === undefined || v === null || v === "") continue;
-    sp.set(k, String(v));
-  }
-  const r = await fetchJSON(`/api/inventario/movimientos${sp.toString() ? `?${sp.toString()}` : ""}`);
-  return r?.data || [];
-}
-
-async function apiAlertas(){
-  const r = await fetchJSON("/api/inventario/alertas");
-  return r?.data || [];
-}
-
-async function apiResumen(desde, hasta){
-  const sp = new URLSearchParams();
-  if (desde) sp.set("desde", desde);
-  if (hasta) sp.set("hasta", hasta);
-  const r = await fetchJSON(`/api/inventario/resumen?${sp.toString()}`);
-  return r?.data || null;
-}
-
-async function apiGetCursos(){
-  const r = await fetchJSON("/api/cursos");
-  return Array.isArray(r) ? r : (r?.data || []);
-}
-
-async function apiGetInstructores(){
-  const r = await fetchJSON("/api/instructores");
-  return Array.isArray(r) ? r : (r?.data || []);
-}
-
-// ===== UI Helpers =====
-function setMsg(el, text, cls="text-muted"){
-  if (!el) return;
-  el.textContent = text || "";
-  el.className = cls;
-}
-
-function fillSelect(el, list, getLabel){
-  if (!el) return;
-  el.innerHTML = list.map(x => `<option value="${esc(x.id)}">${esc(getLabel(x))}</option>`).join("");
-}
-
-function fillSelectWithEmpty(el, list, emptyLabel, getLabel){
-  if (!el) return;
-  el.innerHTML =
-    `<option value="">${esc(emptyLabel)}</option>` +
-    list.map(x => `<option value="${esc(x.id)}">${esc(getLabel(x))}</option>`).join("");
-}
-
-function stockBadge(stock, min){
-  const alerta = Number(stock) <= Number(min);
-  return alerta
-    ? `<span class="badge badge-soft-danger">Stock bajo</span>`
-    : `<span class="badge badge-soft-ok">OK</span>`;
-}
-
-// ===== Render Items =====
-function renderItemsTable(list){
-  if (!tablaItemsBody) return;
-
-  if (!list.length){
-    tablaItemsBody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-3">No hay materiales.</td></tr>`;
-    if (itResumen) itResumen.textContent = "0 materiales";
-    return;
-  }
-
-  tablaItemsBody.innerHTML = list.map(it => {
-    const stock = Number(it.stock_actual||0);
-    const min = Number(it.stock_minimo||0);
-    const alerta = stock <= min;
-    const estado = it.estado || "Activo";
-
-    return `
-      <tr class="${alerta ? "table-warning" : ""}">
-        <td>${esc(it.id)}</td>
-        <td class="fw-semibold">${esc(it.producto)}</td>
-        <td class="text-muted">${esc(it.categoria||"—")}</td>
-        <td class="text-end">${stock}</td>
-        <td class="text-end">${min}</td>
-        <td>
-          ${stockBadge(stock, min)}
-          <span class="ms-1 text-muted small">${esc(estado)}</span>
-        </td>
-        <td>
-          <div class="d-flex flex-wrap gap-1">
-            <button class="btn btn-sm btn-outline-secondary btn-round" data-act="kardex" data-id="${esc(it.id)}">Kardex</button>
-            <button class="btn btn-sm btn-danger btn-round" data-act="consumir" data-id="${esc(it.id)}">Consumir</button>
-            <button class="btn btn-sm btn-success btn-round" data-act="reponer" data-id="${esc(it.id)}">Reponer</button>
-            <button class="btn btn-sm btn-outline-primary btn-round" data-act="edit" data-id="${esc(it.id)}">Editar</button>
-            <button class="btn btn-sm btn-outline-danger btn-round" data-act="inactivar" data-id="${esc(it.id)}">Inactivar</button>
-          </div>
-        </td>
-      </tr>
-    `;
-  }).join("");
-
-  if (itResumen) itResumen.textContent = `${list.length} material${list.length!==1?"es":""}`;
-
-  tablaItemsBody.querySelectorAll("button[data-act]").forEach(btn=>{
-    btn.addEventListener("click", ()=> handleItemAction(btn.dataset.act, btn.dataset.id));
-  });
-}
-
-async function handleItemAction(act, id){
-  const item = itemsCache.find(x=> String(x.id)===String(id));
-  if (!item) return;
-
-  if (act === "kardex"){
-    document.querySelector('[data-bs-target="#tabKardex"]')?.click();
-    if (kItem) kItem.value = String(item.id);
-    await cargarKardex();
-    return;
-  }
-
-  if (act === "consumir"){
-    const modalEl = document.getElementById("modalConsumo");
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    csItem.value = String(item.id);
-    csCant.value = "1";
-    csCosto.value = "0";
-    csMotivo.value = "Clase práctica";
-    if (!csFecha.value) csFecha.value = todayISO();
-    setMsg(msgConsumo, `Material: ${item.producto}`, "text-muted");
-    modal.show();
-    return;
-  }
-
-  if (act === "reponer"){
-    const modalEl = document.getElementById("modalIngreso");
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    igItem.value = String(item.id);
-    igCant.value = "1";
-    igCosto.value = "0";
-    igMotivo.value = "Reposición";
-    if (!igFecha.value) igFecha.value = todayISO();
-    setMsg(msgIngreso, `Material: ${item.producto}`, "text-muted");
-    modal.show();
-    return;
-  }
-
-  if (act === "edit"){
-    const modalEl = document.getElementById("modalItem");
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    itemTitle.textContent = "Editar material";
-    itId.value = item.id;
-    itProducto.value = item.producto || "";
-    itCategoria.value = item.categoria || "";
-    itUnidad.value = item.unidad || "";
-    itMin.value = Number(item.stock_minimo||0);
-    itEstadoForm.value = item.estado || "Activo";
-    setMsg(msgItem, `ID #${item.id}`, "text-muted");
-    modal.show();
-    return;
-  }
-
-  if (act === "inactivar"){
-    if (!confirm("¿Seguro que deseas inactivar este material?")) return;
-    try{
-      await apiRemoveItem(item.id);
-      await recargarTodo();
-    }catch(e){
-      alert("Error: " + (e.message||"desconocido"));
+  // ===== Helpers =====
+  async function fetchJSON(url, options = {}) {
+    options.credentials = "include";
+    const r = await fetch(url, options);
+    const ct = r.headers.get("content-type") || "";
+    const isJson = ct.includes("application/json");
+    if (!r.ok) {
+      let msg = `HTTP ${r.status}`;
+      try { const b = isJson ? await r.json() : await r.text(); msg = b?.error || b?.message || b || msg; } catch (_) {}
+      throw new Error(msg);
     }
-    return;
-  }
-}
-
-// ===== Kardex =====
-function renderKardex(rows){
-  if (!tablaKardexBody) return;
-
-  if (!rows.length){
-    tablaKardexBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-3">No hay movimientos.</td></tr>`;
-    if (kResumen) kResumen.textContent = "0 movimientos";
-    return;
+    return isJson ? r.json() : null;
   }
 
-  tablaKardexBody.innerHTML = rows.map(r=>{
-    const tipo = r.tipo || "—";
-    const badge =
-      tipo === "Ingreso" ? "bg-success" :
-      tipo === "Salida" ? "bg-danger" :
-      "bg-primary";
+  const bs = (n) => "Bs " + Number(n || 0).toFixed(2);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c] || c));
 
-    const tipoTxt = tipo === "Salida" ? "Consumo" : tipo;
-
-    return `
-      <tr>
-        <td>${esc(r.id)}</td>
-        <td>${esc((r.fecha||"").slice(0,10) || "—")}</td>
-        <td><span class="badge ${badge}">${esc(tipoTxt)}</span></td>
-        <td class="text-end">${esc(r.cantidad)}</td>
-        <td class="text-end">${bs(r.costo_unitario || 0)}</td>
-        <td class="text-muted">${esc(r.motivo||"—")}</td>
-        <td>${esc(r.curso_nombre||"—")}</td>
-        <td>${esc(r.instructor_nombre||"—")}</td>
-      </tr>
-    `;
-  }).join("");
-
-  if (kResumen) kResumen.textContent = `${rows.length} movimiento${rows.length!==1?"s":""}`;
-}
-
-// ===== Alertas =====
-function renderAlertas(rows){
-  if (!tablaAlertasBody) return;
-
-  if (!rows.length){
-    tablaAlertasBody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">No hay alertas.</td></tr>`;
-    if (aResumen) aResumen.textContent = "0 alertas";
-    return;
+  function pad2(n) { return String(n).padStart(2, "0"); }
+  function todayISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+  }
+  function monthStartISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-01`;
+  }
+  function nextMonthStartISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad2(d.getMonth()+2)}-01`;
   }
 
-  tablaAlertasBody.innerHTML = rows.map(it=>{
-    const stock = Number(it.stock_actual||0);
-    const min = Number(it.stock_minimo||0);
-    return `
-      <tr class="table-warning">
-        <td>${esc(it.id)}</td>
-        <td class="fw-semibold">${esc(it.producto)}</td>
-        <td class="text-muted">${esc(it.categoria||"—")}</td>
-        <td class="text-end">${stock}</td>
-        <td class="text-end">${min}</td>
-        <td>
-          <div class="d-flex flex-wrap gap-1">
-            <button class="btn btn-sm btn-danger btn-round" data-act="consumir" data-id="${esc(it.id)}">Consumir</button>
-            <button class="btn btn-sm btn-success btn-round" data-act="reponer" data-id="${esc(it.id)}">Reponer</button>
-            <button class="btn btn-sm btn-outline-secondary btn-round" data-act="kardex" data-id="${esc(it.id)}">Kardex</button>
-          </div>
-        </td>
-      </tr>
-    `;
-  }).join("");
-
-  if (aResumen) aResumen.textContent = `${rows.length} alerta${rows.length!==1?"s":""}`;
-
-  tablaAlertasBody.querySelectorAll("button[data-act]").forEach(btn=>{
-    btn.addEventListener("click", ()=> handleItemAction(btn.dataset.act, btn.dataset.id));
-  });
-}
-
-// ===== Resumen =====
-function renderResumenTables(data){
-  if (!data){
-    tablaResumenCursoBody.innerHTML = `<tr><td class="text-muted">—</td><td class="text-end text-muted">—</td></tr>`;
-    tablaResumenInstructorBody.innerHTML = `<tr><td class="text-muted">—</td><td class="text-end text-muted">—</td></tr>`;
-    return;
+  function setMsg(el, text, cls = "text-muted") {
+    if (!el) return;
+    el.textContent = text || "";
+    el.className = cls;
   }
 
-  // En tu backend resumen devuelve total_salidas y costo_salidas
-  rConsumo.textContent = data.total_salidas ?? 0;
-  rCosto.textContent = bs(data.costo_salidas ?? 0);
-
-  const pc = data.costo_total_por_curso || [];
-  const pi = data.costo_total_por_instructor || [];
-
-  tablaResumenCursoBody.innerHTML = pc.length
-    ? pc.map(r=>`<tr><td>${esc(r.curso_nombre||"—")}</td><td class="text-end">${bs(r.costo_total||0)}</td></tr>`).join("")
-    : `<tr><td class="text-muted">Sin datos</td><td class="text-end text-muted">—</td></tr>`;
-
-  tablaResumenInstructorBody.innerHTML = pi.length
-    ? pi.map(r=>`<tr><td>${esc(r.instructor_nombre||"—")}</td><td class="text-end">${bs(r.costo_total||0)}</td></tr>`).join("")
-    : `<tr><td class="text-muted">Sin datos</td><td class="text-end text-muted">—</td></tr>`;
-}
-
-// ===== Loaders =====
-async function cargarItems(){
-  const q = (itBuscar?.value||"").trim();
-  const estado = (itEstado?.value||"").trim();
-  const rows = await apiListItems({ q, estado, limit: 500, offset: 0 });
-  itemsCache = rows;
-
-  fillSelect(csItem, itemsCache, x => x.producto);
-  fillSelect(igItem, itemsCache, x => x.producto);
-  fillSelect(kItem, itemsCache, x => x.producto);
-
-  renderItemsTable(itemsCache);
-}
-
-async function cargarKardex(){
-  const item_id = kItem?.value || "";
-  if (!item_id){ renderKardex([]); return; }
-  const tipo = kTipo?.value || "";
-  const desde = kDesde?.value || "";
-  const hasta = kHasta?.value || "";
-  const rows = await apiListMovimientos({ item_id, tipo, desde, hasta });
-  renderKardex(rows);
-}
-
-async function cargarAlertas(){
-  const rows = await apiAlertas();
-  renderAlertas(rows);
-  if (kpiAlertas) kpiAlertas.textContent = String(rows.length);
-}
-
-async function cargarResumenRango(){
-  const desde = rDesde?.value || "";
-  const hasta = rHasta?.value || "";
-  const data = await apiResumen(desde, hasta);
-  renderResumenTables(data);
-}
-
-async function cargarKpisMes(){
-  const desde = monthStartISO(new Date());
-  const hasta = nextMonthStartISO(new Date());
-  const dataMes = await apiResumen(desde, hasta);
-
-  // consumo = salidas
-  if (kpiConsumoMes) kpiConsumoMes.textContent = String(dataMes?.total_salidas ?? 0);
-  if (kpiCostoMes) kpiCostoMes.textContent = bs(dataMes?.costo_salidas ?? 0);
-
-  const activos = itemsCache.filter(x => (x.estado||"Activo") === "Activo");
-  if (kpiItems) kpiItems.textContent = String(activos.length);
-}
-
-async function recargarTodo(){
-  setMsg(msgInv, "Actualizando...", "text-muted");
-  await cargarItems();
-  await cargarAlertas();
-  await cargarKardex();
-  await cargarResumenRango();
-  await cargarKpisMes();
-  setMsg(msgInv, "Listo ✔", "text-success");
-}
-
-// ===== Init =====
-document.addEventListener("DOMContentLoaded", async ()=>{
-  try{
-    setMsg(msgInv, "Cargando...", "text-muted");
-
-    cursosCache = await apiGetCursos();
-    instructoresCache = await apiGetInstructores();
-
-    fillSelectWithEmpty(csCurso, cursosCache, "— Sin curso —", x => x.nombre);
-    fillSelectWithEmpty(csInstructor, instructoresCache, "— Sin instructor —", x => x.nombre);
-
-    // ingreso no necesita curso/instructor
-    // fechas default
-    if (csFecha && !csFecha.value) csFecha.value = todayISO();
-    if (igFecha && !igFecha.value) igFecha.value = todayISO();
-
-    // resumen default mes actual
-    if (rDesde && !rDesde.value) rDesde.value = monthStartISO(new Date());
-    if (rHasta && !rHasta.value) rHasta.value = todayISO();
-
-    await recargarTodo();
-  }catch(e){
-    console.error(e);
-    setMsg(msgInv, "Error: " + (e.message||"desconocido"), "text-danger");
+  function fillSelect(el, list, getLabel, withEmpty = false, emptyLabel = "— Selecciona —") {
+    if (!el) return;
+    const emptyOpt = withEmpty ? `<option value="">${esc(emptyLabel)}</option>` : "";
+    el.innerHTML = emptyOpt + list.map(x => `<option value="${esc(x.id)}">${esc(getLabel(x))}</option>`).join("");
   }
-});
 
-// ===== Events =====
-btnReloadInv?.addEventListener("click", recargarTodo);
-btnFiltrarItems?.addEventListener("click", recargarTodo);
-itBuscar?.addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ e.preventDefault(); recargarTodo(); } });
-itEstado?.addEventListener("change", recargarTodo);
+  // ===== Elementos del DOM =====
+  const msgInv = document.getElementById("msgInv");
+  const kpiItems = document.getElementById("kpiItems");
+  const kpiAlertas = document.getElementById("kpiAlertas");
+  const kpiConsumoMes = document.getElementById("kpiConsumoMes");
+  const kpiCostoMes = document.getElementById("kpiCostoMes");
 
-btnFiltrarKardex?.addEventListener("click", cargarKardex);
-btnResumen?.addEventListener("click", cargarResumenRango);
+  const qItem = document.getElementById("qItem");
+  const fEstado = document.getElementById("fEstado");
+  const tablaItemsBody = document.getElementById("tablaItemsBody");
+  const itResumen = document.getElementById("itResumen");
 
-// ===== Guardar Material (Item) =====
-formItem?.addEventListener("submit", async (e)=>{
-  e.preventDefault();
-  try{
-    const payload = {
-      producto: (itProducto.value||"").trim(),
-      categoria: (itCategoria.value||"").trim(),
-      unidad: (itUnidad.value||"").trim(),
-      stock_minimo: Number(itMin.value||0),
-      estado: (itEstadoForm.value||"Activo"),
-    };
+  const kItem = document.getElementById("kItem");
+  const kTipo = document.getElementById("kTipo");
+  const kDesde = document.getElementById("kDesde");
+  const kHasta = document.getElementById("kHasta");
+  const tablaKardexBody = document.getElementById("tablaKardexBody");
+  const kResumen = document.getElementById("kResumen");
 
-    if (!payload.producto){
-      setMsg(msgItem, "El material es obligatorio", "text-danger");
+  const tablaAlertasBody = document.getElementById("tablaAlertasBody");
+  const rDesde = document.getElementById("rDesde");
+  const rHasta = document.getElementById("rHasta");
+  const tablaResumenCursoBody = document.getElementById("tablaResumenCursoBody");
+  const tablaResumenInstructorBody = document.getElementById("tablaResumenInstructorBody");
+
+  const formItem = document.getElementById("formItem");
+  const itId = document.getElementById("itId");
+  const itProducto = document.getElementById("itProducto");
+  const itCategoria = document.getElementById("itCategoria");
+  const itUnidad = document.getElementById("itUnidad");
+  const itMin = document.getElementById("itMin");
+  const itEstadoForm = document.getElementById("itEstadoForm");
+  const msgItem = document.getElementById("msgItem");
+
+  const formConsumo = document.getElementById("formConsumo");
+  const csItem = document.getElementById("csItem");
+  const csCant = document.getElementById("csCant");
+  const csFecha = document.getElementById("csFecha");
+  const csCurso = document.getElementById("csCurso");
+  const csInstructor = document.getElementById("csInstructor");
+  const csCosto = document.getElementById("csCosto");
+  const csMotivo = document.getElementById("csMotivo");
+  const msgConsumo = document.getElementById("msgConsumo");
+
+  const formIngreso = document.getElementById("formIngreso");
+  const igItem = document.getElementById("igItem");
+  const igCant = document.getElementById("igCant");
+  const igFecha = document.getElementById("igFecha");
+  const igCosto = document.getElementById("igCosto");
+  const igMotivo = document.getElementById("igMotivo");
+  const msgIngreso = document.getElementById("msgIngreso");
+
+  const formVenta = document.getElementById("formVenta");
+  const vItem = document.getElementById("vItem");
+  const vCant = document.getElementById("vCant");
+  const vFecha = document.getElementById("vFecha");
+  const vCurso = document.getElementById("vCurso");
+  const vInstructor = document.getElementById("vInstructor");
+  const vPrecio = document.getElementById("vPrecio");
+  const vNota = document.getElementById("vNota");
+  const msgVenta = document.getElementById("msgVenta");
+
+  const formDevolucion = document.getElementById("formDevolucion");
+  const dPrestamo = document.getElementById("dPrestamo");
+  const dFecha = document.getElementById("dFecha");
+  const dCant = document.getElementById("dCant");
+  const dNota = document.getElementById("dNota");
+  const msgDevolucion = document.getElementById("msgDevolucion");
+
+  const tblPrestamosPend = document.getElementById("tblPrestamosPend");
+  const msgPrestamosPend = document.getElementById("msgPrestamosPend");
+
+  // ===== Cache =====
+  let itemsCache = [];
+  let cursosCache = [];
+  let instructoresCache = [];
+
+  // ===== API calls =====
+  async function apiListItems(p = {}) {
+    const sp = new URLSearchParams();
+    if (p.q) sp.set("q", p.q);
+    if (p.estado) sp.set("estado", p.estado);
+    sp.set("limit", "500");
+    sp.set("offset", "0");
+    const r = await fetchJSON(`/api/inventario/items?${sp}`);
+    return r?.data || [];
+  }
+  async function apiGetItem(id) {
+    return fetchJSON(`/api/inventario/items/${id}`);
+  }
+  async function apiCreateItem(payload) {
+    return fetchJSON("/api/inventario/items", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) });
+  }
+  async function apiUpdateItem(id, payload) {
+    return fetchJSON(`/api/inventario/items/${id}`, { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) });
+  }
+  async function apiListMovimientos(p = {}) {
+    const sp = new URLSearchParams();
+    for (const [k, v] of Object.entries(p)) { if (v !== undefined && v !== null && v !== "") sp.set(k, String(v)); }
+    const r = await fetchJSON(`/api/inventario/movimientos?${sp}`);
+    return r?.data || [];
+  }
+  async function apiCreateMovimiento(payload) {
+    return fetchJSON("/api/inventario/movimientos", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) });
+  }
+  async function apiAlertas() {
+    const r = await fetchJSON("/api/inventario/alertas");
+    return r?.data || [];
+  }
+  async function apiResumen(desde, hasta) {
+    const sp = new URLSearchParams();
+    if (desde) sp.set("desde", desde);
+    if (hasta) sp.set("hasta", hasta);
+    const r = await fetchJSON(`/api/inventario/resumen?${sp}`);
+    return r?.data || null;
+  }
+  async function apiCreatePrestamo(payload) {
+    return fetchJSON("/api/inventario/prestamos", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) });
+  }
+  async function apiListPrestamos(p = {}) {
+    const sp = new URLSearchParams();
+    for (const [k, v] of Object.entries(p)) { if (v !== undefined && v !== null && v !== "") sp.set(k, String(v)); }
+    const r = await fetchJSON(`/api/inventario/prestamos?${sp}`);
+    return r?.data || [];
+  }
+  async function apiDevolverPrestamo(id, payload) {
+    return fetchJSON(`/api/inventario/prestamos/${id}/devolver`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) });
+  }
+  async function apiCreateVenta(payload) {
+    return fetchJSON("/api/inventario/ventas", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) });
+  }
+  async function apiVentasResumen(desde, hasta) {
+    const sp = new URLSearchParams();
+    if (desde) sp.set("desde", desde);
+    if (hasta) sp.set("hasta", hasta);
+    const r = await fetchJSON(`/api/inventario/ventas/resumen?${sp}`);
+    return r?.data || null;
+  }
+  async function apiGetCursos() {
+    const r = await fetchJSON("/api/cursos");
+    return Array.isArray(r) ? r : (r?.data || []);
+  }
+  async function apiGetInstructores() {
+    const r = await fetchJSON("/api/instructores");
+    return Array.isArray(r) ? r : (r?.data || []);
+  }
+
+  // Stock local estimado (para validación rápida en frontend)
+  async function getStockLocal(item_id) {
+    try {
+      const rows = await apiListMovimientos({ item_id });
+      let stock = 0;
+      for (const r of rows) {
+        const cant = Number(r.cantidad || 0);
+        if (r.tipo === "Ingreso" || r.tipo === "Devolucion") stock += cant;
+        else if (r.tipo === "Salida" || r.tipo === "Prestamo" || r.tipo === "Venta") stock -= cant;
+        else if (r.tipo === "Ajuste") stock += cant;
+      }
+      return stock;
+    } catch (_) { return 0; }
+  }
+
+  // ===== Renders =====
+  function stockBadge(actual, minimo) {
+    const n = Number(actual || 0);
+    const m = Number(minimo || 0);
+    if (n <= 0) return `<span class="badge bg-danger">Sin stock</span>`;
+    if (n <= m) return `<span class="badge bg-warning text-dark">${n}</span>`;
+    return `<span class="badge bg-success-subtle text-success border border-success-subtle">${n}</span>`;
+  }
+
+  function renderItemsTable(list) {
+    if (!tablaItemsBody) return;
+    if (!list.length) {
+      tablaItemsBody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">Sin resultados.</td></tr>`;
+      if (itResumen) itResumen.textContent = "0 materiales";
       return;
     }
-
-    setMsg(msgItem, "Guardando...", "text-muted");
-    const id = (itId.value||"").trim();
-
-    if (id) await apiUpdateItem(id, payload);
-    else await apiCreateItem(payload);
-
-    setMsg(msgItem, "Guardado ✔", "text-success");
-    await recargarTodo();
-    bootstrap.Modal.getOrCreateInstance(document.getElementById("modalItem")).hide();
-  }catch(err){
-    console.error(err);
-    setMsg(msgItem, "Error: " + (err.message||"desconocido"), "text-danger");
+    tablaItemsBody.innerHTML = list.map(it => {
+      const estado = it.estado || "Activo";
+      const badge = estado === "Activo" ? "bg-success" : "bg-secondary";
+      const activarLabel = estado === "Activo" ? "Inactivar" : "Activar";
+      return `
+        <tr>
+          <td class="fw-semibold">${esc(it.producto || "")}</td>
+          <td class="text-muted">${esc(it.categoria || "—")}</td>
+          <td class="text-muted">${esc(it.unidad || "—")}</td>
+          <td class="text-end">${stockBadge(it.stock_actual, it.stock_minimo)}</td>
+          <td class="text-end text-muted">${esc(it.stock_minimo ?? 0)}</td>
+          <td><span class="badge ${badge}">${esc(estado)}</span></td>
+          <td class="text-end">
+            <div class="dropdown">
+              <button class="btn btn-sm btn-outline-secondary btn-round dropdown-toggle" data-bs-toggle="dropdown">
+                Acciones
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="#" data-act="kardex" data-id="${esc(it.id)}">🧾 Ver Kardex</a></li>
+                <li><a class="dropdown-item" href="#" data-act="operar" data-id="${esc(it.id)}">⚡ Registrar operación</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="#" data-act="edit" data-id="${esc(it.id)}">✏️ Editar</a></li>
+                <li><a class="dropdown-item text-${estado==="Activo"?"danger":"success"}" href="#" data-act="toggleEstado" data-id="${esc(it.id)}">${estado==="Activo"?"⛔":"✅"} ${activarLabel}</a></li>
+              </ul>
+            </div>
+          </td>
+        </tr>`;
+    }).join("");
+    if (itResumen) itResumen.textContent = `${list.length} material${list.length === 1 ? "" : "es"}`;
+    tablaItemsBody.querySelectorAll("[data-act]").forEach(el => {
+      el.addEventListener("click", (e) => { e.preventDefault(); handleItemAction(el.dataset.act, el.dataset.id); });
+    });
   }
-});
 
-// Reset modal item when opened manually
-document.getElementById("modalItem")?.addEventListener("show.bs.modal", ()=>{
-  if (!itId.value){
-    itemTitle.textContent = "Nuevo material";
-    itProducto.value = "";
-    itCategoria.value = "";
-    itUnidad.value = "";
-    itMin.value = "0";
-    itEstadoForm.value = "Activo";
-    setMsg(msgItem, "");
+  function renderKardex(rows) {
+    if (!tablaKardexBody) return;
+    if (!rows.length) {
+      tablaKardexBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">No hay movimientos para los filtros seleccionados.</td></tr>`;
+      if (kResumen) kResumen.textContent = "0 movimientos";
+      return;
+    }
+    tablaKardexBody.innerHTML = rows.map(r => {
+      const tipo = r.tipo || "—";
+      const badge = tipo === "Ingreso" ? "bg-success" : tipo === "Devolucion" ? "bg-success" : tipo === "Salida" ? "bg-danger" : tipo === "Prestamo" ? "bg-warning text-dark" : tipo === "Venta" ? "bg-primary" : "bg-secondary";
+      const tipoTxt = tipo === "Salida" ? "Salida (hist.)" : tipo === "Devolucion" ? "Devolución" : tipo === "Prestamo" ? "Préstamo" : tipo;
+      const precio = r.tipo === "Venta" ? (r.precio_unitario || 0) : (r.costo_unitario || 0);
+      return `
+        <tr>
+          <td class="text-muted">${esc(r.id)}</td>
+          <td>${esc((r.fecha || "").slice(0,10) || "—")}</td>
+          <td><span class="badge ${badge}">${esc(tipoTxt)}</span></td>
+          <td class="text-end fw-semibold">${esc(r.cantidad)}</td>
+          <td class="text-end text-muted">${bs(precio)}</td>
+          <td class="text-muted">${esc(r.motivo || "—")}</td>
+          <td class="text-muted">${esc(r.curso_nombre || "—")}</td>
+          <td class="text-muted">${esc(r.instructor_nombre || "—")}</td>
+        </tr>`;
+    }).join("");
+    if (kResumen) kResumen.textContent = `${rows.length} movimiento${rows.length === 1 ? "" : "s"}`;
   }
-});
 
-// ===== Registrar CONSUMO (Salida) =====
-formConsumo?.addEventListener("submit", async (e)=>{
-  e.preventDefault();
-  try{
-    const payload = {
-      item_id: Number(csItem.value||0),
-      tipo: "Salida",
-      cantidad: Number(csCant.value||0),
-      costo_unitario: Number(csCosto.value||0),
-      fecha: (csFecha.value||todayISO()),
-      motivo: (csMotivo.value||"").trim() || "Consumo en clase",
-      curso_id: csCurso.value ? Number(csCurso.value) : null,
-      instructor_id: csInstructor.value ? Number(csInstructor.value) : null,
+  function renderAlertas(rows) {
+    if (!tablaAlertasBody) return;
+    if (!rows.length) {
+      tablaAlertasBody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">✅ Sin alertas. Todos los materiales tienen stock suficiente.</td></tr>`;
+      return;
+    }
+    tablaAlertasBody.innerHTML = rows.map(r => {
+      const stock = Number(r.stock_actual || 0);
+      const min = Number(r.stock_minimo || 0);
+      const stockClass = stock <= 0 ? "text-danger fw-bold" : "text-warning fw-bold";
+      return `
+        <tr>
+          <td class="fw-semibold">${esc(r.producto || "")}</td>
+          <td class="text-muted">${esc(r.categoria || "—")}</td>
+          <td class="text-end ${stockClass}">${stock}</td>
+          <td class="text-end text-muted">${min}</td>
+          <td><span class="badge ${stock <= 0 ? "bg-danger" : "bg-warning text-dark"}">${stock <= 0 ? "Sin stock" : "Stock bajo"}</span></td>
+        </tr>`;
+    }).join("");
+  }
+
+  function renderResumenTables(data) {
+    const pc = Array.isArray(data?.por_curso) ? data.por_curso : [];
+    const pi = Array.isArray(data?.por_instructor) ? data.por_instructor : [];
+    tablaResumenCursoBody.innerHTML = pc.length
+      ? pc.map(x => `<tr><td>${esc(x.curso_nombre || "—")}</td><td class="text-end fw-semibold">${esc(x.salidas)}</td></tr>`).join("")
+      : `<tr><td colspan="2" class="text-muted text-center py-3">Sin datos en el período.</td></tr>`;
+    tablaResumenInstructorBody.innerHTML = pi.length
+      ? pi.map(x => `<tr><td>${esc(x.instructor_nombre || "—")}</td><td class="text-end fw-semibold">${esc(x.salidas)}</td></tr>`).join("")
+      : `<tr><td colspan="2" class="text-muted text-center py-3">Sin datos en el período.</td></tr>`;
+  }
+
+  // ===== Loaders =====
+  async function cargarItems() {
+    const rows = await apiListItems({ q: (qItem?.value || "").trim(), estado: fEstado?.value || "" });
+    itemsCache = rows;
+    fillSelect(csItem, itemsCache, x => x.producto);
+    fillSelect(igItem, itemsCache, x => x.producto);
+    fillSelect(kItem, itemsCache, x => x.producto);
+    fillSelect(vItem, itemsCache, x => x.producto);
+    renderItemsTable(itemsCache);
+  }
+
+  async function cargarKardex() {
+    const params = {
+      item_id: kItem?.value ? Number(kItem.value) : null,
+      tipo: kTipo?.value || "",
+      desde: kDesde?.value || "",
+      hasta: kHasta?.value || ""
     };
-
-    if (!payload.item_id) return setMsg(msgConsumo, "Selecciona un material", "text-danger");
-    if (!payload.cantidad || payload.cantidad <= 0) return setMsg(msgConsumo, "Cantidad inválida", "text-danger");
-
-    setMsg(msgConsumo, "Registrando consumo...", "text-muted");
-    await apiCreateMovimiento(payload);
-
-    setMsg(msgConsumo, "Consumo registrado ✔", "text-success");
-    await recargarTodo();
-    bootstrap.Modal.getOrCreateInstance(document.getElementById("modalConsumo")).hide();
-  }catch(err){
-    console.error(err);
-    setMsg(msgConsumo, "Error: " + (err.message||"desconocido"), "text-danger");
+    const rows = await apiListMovimientos(params);
+    renderKardex(rows);
   }
-});
 
-document.getElementById("modalConsumo")?.addEventListener("shown.bs.modal", ()=>{
-  if (csFecha && !csFecha.value) csFecha.value = todayISO();
-});
-
-// ===== Registrar INGRESO (Reposición) =====
-formIngreso?.addEventListener("submit", async (e)=>{
-  e.preventDefault();
-  try{
-    const payload = {
-      item_id: Number(igItem.value||0),
-      tipo: "Ingreso",
-      cantidad: Number(igCant.value||0),
-      costo_unitario: Number(igCosto.value||0),
-      fecha: (igFecha.value||todayISO()),
-      motivo: (igMotivo.value||"").trim() || "Reposición",
-      curso_id: null,
-      instructor_id: null,
-    };
-
-    if (!payload.item_id) return setMsg(msgIngreso, "Selecciona un material", "text-danger");
-    if (!payload.cantidad || payload.cantidad <= 0) return setMsg(msgIngreso, "Cantidad inválida", "text-danger");
-
-    setMsg(msgIngreso, "Registrando ingreso...", "text-muted");
-    await apiCreateMovimiento(payload);
-
-    setMsg(msgIngreso, "Ingreso registrado ✔", "text-success");
-    await recargarTodo();
-    bootstrap.Modal.getOrCreateInstance(document.getElementById("modalIngreso")).hide();
-  }catch(err){
-    console.error(err);
-    setMsg(msgIngreso, "Error: " + (err.message||"desconocido"), "text-danger");
+  async function cargarPrestamosPendientes() {
+    try {
+      const rows = await apiListPrestamos({ estado: "Pendiente" });
+      if (dPrestamo) {
+        dPrestamo.innerHTML = `<option value="">— Selecciona préstamo —</option>` + rows.map(p => {
+          const pend = Number(p.cantidad || 0) - Number(p.cantidad_devuelta || 0);
+          return `<option value="${esc(p.id)}" data-pendiente="${esc(pend)}">#${p.id} — ${p.item_producto} — ${pend} pend. — ${p.instructor_nombre || "Prof."}</option>`;
+        }).join("");
+      }
+      if (tblPrestamosPend) {
+        if (!rows.length) {
+          tblPrestamosPend.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">✅ Sin préstamos pendientes.</td></tr>`;
+        } else {
+          tblPrestamosPend.innerHTML = rows.map(p => {
+            const pend = Number(p.cantidad || 0) - Number(p.cantidad_devuelta || 0);
+            return `
+              <tr>
+                <td class="text-muted">#${esc(p.id)}</td>
+                <td class="fw-semibold">${esc(p.item_producto || "")}</td>
+                <td>${esc(p.instructor_nombre || "")}</td>
+                <td class="text-muted">${esc(p.curso_nombre || "—")}</td>
+                <td class="text-end"><span class="badge bg-warning text-dark">${pend}</span></td>
+                <td class="text-end">
+                  <button class="btn btn-sm btn-outline-success btn-round" data-act="devolver" data-id="${esc(p.id)}">↩️ Devolver</button>
+                </td>
+              </tr>`;
+          }).join("");
+          tblPrestamosPend.querySelectorAll('[data-act="devolver"]').forEach(btn => {
+            btn.addEventListener("click", () => {
+              if (dPrestamo) dPrestamo.value = btn.dataset.id;
+              const opt = dPrestamo?.options[dPrestamo.selectedIndex];
+              const pend = Number(opt?.getAttribute("data-pendiente") || 0);
+              if (dCant) dCant.value = pend ? String(pend) : "1";
+              if (dFecha && !dFecha.value) dFecha.value = todayISO();
+              bootstrap.Modal.getOrCreateInstance(document.getElementById("modalDevolucion")).show();
+            });
+          });
+        }
+      }
+      if (msgPrestamosPend) setMsg(msgPrestamosPend, rows.length ? `${rows.length} pendiente${rows.length===1?"":"s"}` : "", "text-warning fw-semibold");
+    } catch (err) {
+      console.error("Error cargando préstamos:", err);
+      if (tblPrestamosPend) tblPrestamosPend.innerHTML = `<tr><td colspan="6" class="text-danger">Error cargando préstamos.</td></tr>`;
+    }
   }
-});
 
-document.getElementById("modalIngreso")?.addEventListener("shown.bs.modal", ()=>{
-  if (igFecha && !igFecha.value) igFecha.value = todayISO();
-});
+  async function cargarAlertas() {
+    const rows = await apiAlertas();
+    renderAlertas(rows);
+    if (kpiAlertas) kpiAlertas.textContent = String(rows.length);
+  }
+
+  async function cargarResumenRango() {
+    const data = await apiResumen(rDesde?.value || "", rHasta?.value || "");
+    renderResumenTables(data);
+  }
+
+  async function cargarKpis() {
+    const desde = monthStartISO();
+    const hasta = nextMonthStartISO();
+    const vMes = await apiVentasResumen(desde, hasta);
+    if (kpiConsumoMes) kpiConsumoMes.textContent = String(vMes?.total_ventas ?? 0);
+    if (kpiCostoMes) kpiCostoMes.textContent = bs(vMes?.monto_ventas ?? 0);
+    const activos = itemsCache.filter(x => (x.estado || "Activo") === "Activo");
+    if (kpiItems) kpiItems.textContent = String(activos.length);
+  }
+
+  async function recargarTodo() {
+    setMsg(msgInv, "Actualizando…", "text-muted");
+    try {
+      await cargarItems();
+      await Promise.all([cargarAlertas(), cargarPrestamosPendientes(), cargarKardex(), cargarResumenRango(), cargarKpis()]);
+      setMsg(msgInv, "✔ Listo", "text-success");
+      setTimeout(() => setMsg(msgInv, "", "text-muted"), 2500);
+    } catch (err) {
+      console.error(err);
+      setMsg(msgInv, "Error: " + (err.message || "desconocido"), "text-danger");
+    }
+  }
+
+  // ===== Acciones por fila =====
+  async function handleItemAction(act, id) {
+    if (act === "kardex") {
+      document.querySelector('[data-bs-target="#tabKardex"]')?.click();
+      if (kItem) kItem.value = String(id);
+      await cargarKardex();
+      return;
+    }
+    if (act === "operar") {
+      // Abrir selector, pre-seleccionando el item
+      const selectorModal = bootstrap.Modal.getOrCreateInstance(document.getElementById("modalSelector"));
+      // Guardamos el item_id a preseleccionar
+      document.getElementById("modalSelector").dataset.preItem = id;
+      selectorModal.show();
+      return;
+    }
+    const itemResp = await apiGetItem(id);
+    if (!itemResp?.data) { alert("No se pudo cargar el material."); return; }
+    const item = itemResp.data;
+
+    if (act === "edit") {
+      document.getElementById("modalItemTitle").textContent = "Editar material";
+      itId.value = item.id;
+      itProducto.value = item.producto || "";
+      itCategoria.value = item.categoria || "";
+      itUnidad.value = item.unidad || "";
+      itMin.value = item.stock_minimo ?? 0;
+      itEstadoForm.value = item.estado || "Activo";
+      setMsg(msgItem, "", "text-muted");
+      bootstrap.Modal.getOrCreateInstance(document.getElementById("modalItem")).show();
+      return;
+    }
+    if (act === "toggleEstado") {
+      const nuevoEstado = item.estado === "Activo" ? "Inactivo" : "Activo";
+      const label = nuevoEstado === "Inactivo" ? "¿Inactivar" : "¿Activar";
+      if (!confirm(`${label} el material "${item.producto}"?`)) return;
+      try {
+        await apiUpdateItem(item.id, { estado: nuevoEstado });
+        await cargarItems();
+      } catch (err) { alert("Error: " + (err.message || "desconocido")); }
+      return;
+    }
+  }
+
+  // ===== Formulario: Material =====
+  formItem?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        producto: (itProducto.value || "").trim(),
+        categoria: (itCategoria.value || "").trim() || null,
+        unidad: (itUnidad.value || "").trim() || null,
+        stock_minimo: Number(itMin.value || 0),
+        estado: itEstadoForm.value || "Activo"
+      };
+      if (!payload.producto) return setMsg(msgItem, "El nombre del producto es obligatorio.", "text-danger");
+      setMsg(msgItem, "Guardando…", "text-muted");
+      if (itId.value) {
+        await apiUpdateItem(Number(itId.value), payload);
+      } else {
+        await apiCreateItem(payload);
+      }
+      setMsg(msgItem, "✔ Guardado correctamente", "text-success");
+      await cargarItems();
+      setTimeout(() => bootstrap.Modal.getOrCreateInstance(document.getElementById("modalItem")).hide(), 600);
+    } catch (err) {
+      console.error(err);
+      setMsg(msgItem, "Error: " + (err.message || "desconocido"), "text-danger");
+    }
+  });
+
+  // Al abrir modal nuevo material → resetear
+  document.getElementById("modalItem")?.addEventListener("show.bs.modal", (e) => {
+    // Si se abrió desde el botón "Nuevo material" (no desde editar)
+    if (!itId.value) {
+      document.getElementById("modalItemTitle").textContent = "Nuevo material";
+      formItem?.reset();
+      itEstadoForm.value = "Activo";
+    }
+  });
+  document.getElementById("modalItem")?.addEventListener("hidden.bs.modal", () => {
+    itId.value = "";
+    formItem?.reset();
+    setMsg(msgItem, "", "text-muted");
+  });
+
+  // ===== Formulario: PRÉSTAMO =====
+  formConsumo?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        item_id: Number(csItem.value || 0),
+        cantidad: Number(csCant.value || 0),
+        fecha: csFecha.value || todayISO(),
+        nota: (csMotivo.value || "").trim() || "Préstamo en clase",
+        curso_id: csCurso.value ? Number(csCurso.value) : null,
+        instructor_id: csInstructor.value ? Number(csInstructor.value) : null,
+        costo_unitario: Number(csCosto.value || 0)
+      };
+      if (!payload.item_id) return setMsg(msgConsumo, "Selecciona un material.", "text-danger");
+      if (!payload.cantidad || payload.cantidad <= 0) return setMsg(msgConsumo, "Cantidad inválida.", "text-danger");
+      if (!payload.instructor_id) return setMsg(msgConsumo, "Selecciona un profesor (obligatorio).", "text-danger");
+      const stock = await getStockLocal(payload.item_id);
+      if (stock - payload.cantidad < 0) return setMsg(msgConsumo, `Stock insuficiente (disponible: ${stock}).`, "text-danger");
+      setMsg(msgConsumo, "Registrando préstamo…", "text-muted");
+      await apiCreatePrestamo(payload);
+      setMsg(msgConsumo, "✔ Préstamo registrado.", "text-success");
+      await recargarTodo();
+      setTimeout(() => bootstrap.Modal.getOrCreateInstance(document.getElementById("modalConsumo")).hide(), 600);
+    } catch (err) {
+      console.error(err);
+      setMsg(msgConsumo, "Error: " + (err.message || "desconocido"), "text-danger");
+    }
+  });
+  document.getElementById("modalConsumo")?.addEventListener("show.bs.modal", () => {
+    if (csFecha && !csFecha.value) csFecha.value = todayISO();
+    // Pre-seleccionar item si viene de "Registrar operación"
+    const preItem = document.getElementById("modalSelector")?.dataset.preItem;
+    if (preItem && csItem) csItem.value = preItem;
+    setMsg(msgConsumo, "", "text-muted");
+  });
+  document.getElementById("modalConsumo")?.addEventListener("hidden.bs.modal", () => {
+    formConsumo?.reset();
+    setMsg(msgConsumo, "", "text-muted");
+  });
+
+  // ===== Formulario: INGRESO =====
+  formIngreso?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        item_id: Number(igItem.value || 0),
+        tipo: "Ingreso",
+        cantidad: Number(igCant.value || 0),
+        costo_unitario: Number(igCosto.value || 0),
+        fecha: igFecha.value || todayISO(),
+        motivo: (igMotivo.value || "").trim() || "Ingreso de stock"
+      };
+      if (!payload.item_id) return setMsg(msgIngreso, "Selecciona un material.", "text-danger");
+      if (!payload.cantidad || payload.cantidad <= 0) return setMsg(msgIngreso, "Cantidad inválida.", "text-danger");
+      setMsg(msgIngreso, "Registrando ingreso…", "text-muted");
+      await apiCreateMovimiento(payload);
+      setMsg(msgIngreso, "✔ Ingreso registrado.", "text-success");
+      await recargarTodo();
+      setTimeout(() => bootstrap.Modal.getOrCreateInstance(document.getElementById("modalIngreso")).hide(), 600);
+    } catch (err) {
+      console.error(err);
+      setMsg(msgIngreso, "Error: " + (err.message || "desconocido"), "text-danger");
+    }
+  });
+  document.getElementById("modalIngreso")?.addEventListener("show.bs.modal", () => {
+    if (igFecha && !igFecha.value) igFecha.value = todayISO();
+    const preItem = document.getElementById("modalSelector")?.dataset.preItem;
+    if (preItem && igItem) igItem.value = preItem;
+    setMsg(msgIngreso, "", "text-muted");
+  });
+  document.getElementById("modalIngreso")?.addEventListener("hidden.bs.modal", () => {
+    formIngreso?.reset();
+    setMsg(msgIngreso, "", "text-muted");
+  });
+
+  // ===== Formulario: VENTA =====
+  formVenta?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        item_id: Number(vItem.value || 0),
+        cantidad: Number(vCant.value || 0),
+        precio_unitario: Number(vPrecio.value || 0),
+        fecha: vFecha.value || todayISO(),
+        nota: (vNota.value || "").trim() || "Venta",
+        curso_id: vCurso.value ? Number(vCurso.value) : null,
+        instructor_id: vInstructor.value ? Number(vInstructor.value) : null
+      };
+      if (!payload.item_id) return setMsg(msgVenta, "Selecciona un material.", "text-danger");
+      if (!payload.cantidad || payload.cantidad <= 0) return setMsg(msgVenta, "Cantidad inválida.", "text-danger");
+      if (payload.precio_unitario < 0) return setMsg(msgVenta, "Precio inválido.", "text-danger");
+      const stock = await getStockLocal(payload.item_id);
+      if (stock - payload.cantidad < 0) return setMsg(msgVenta, `Stock insuficiente (disponible: ${stock}).`, "text-danger");
+      setMsg(msgVenta, "Registrando venta…", "text-muted");
+      await apiCreateVenta(payload);
+      setMsg(msgVenta, "✔ Venta registrada.", "text-success");
+      await recargarTodo();
+      setTimeout(() => bootstrap.Modal.getOrCreateInstance(document.getElementById("modalVenta")).hide(), 600);
+    } catch (err) {
+      console.error(err);
+      setMsg(msgVenta, "Error: " + (err.message || "desconocido"), "text-danger");
+    }
+  });
+  document.getElementById("modalVenta")?.addEventListener("show.bs.modal", () => {
+    if (vFecha && !vFecha.value) vFecha.value = todayISO();
+    const preItem = document.getElementById("modalSelector")?.dataset.preItem;
+    if (preItem && vItem) vItem.value = preItem;
+    setMsg(msgVenta, "", "text-muted");
+  });
+  document.getElementById("modalVenta")?.addEventListener("hidden.bs.modal", () => {
+    formVenta?.reset();
+    setMsg(msgVenta, "", "text-muted");
+  });
+
+  // ===== Formulario: DEVOLUCIÓN =====
+  formDevolucion?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const prestamoId = Number(dPrestamo.value || 0);
+      const payload = {
+        fecha: dFecha.value || todayISO(),
+        cantidad: Number(dCant.value || 0),
+        nota: (dNota.value || "").trim() || "Devolución"
+      };
+      if (!prestamoId) return setMsg(msgDevolucion, "Selecciona un préstamo pendiente.", "text-danger");
+      if (!payload.cantidad || payload.cantidad <= 0) return setMsg(msgDevolucion, "Cantidad inválida.", "text-danger");
+      setMsg(msgDevolucion, "Registrando devolución…", "text-muted");
+      await apiDevolverPrestamo(prestamoId, payload);
+      setMsg(msgDevolucion, "✔ Devolución registrada.", "text-success");
+      await recargarTodo();
+      setTimeout(() => bootstrap.Modal.getOrCreateInstance(document.getElementById("modalDevolucion")).hide(), 600);
+    } catch (err) {
+      console.error(err);
+      setMsg(msgDevolucion, "Error: " + (err.message || "desconocido"), "text-danger");
+    }
+  });
+  document.getElementById("modalDevolucion")?.addEventListener("show.bs.modal", async () => {
+    if (dFecha && !dFecha.value) dFecha.value = todayISO();
+    setMsg(msgDevolucion, "", "text-muted");
+    await cargarPrestamosPendientes();
+  });
+  document.getElementById("modalDevolucion")?.addEventListener("hidden.bs.modal", () => {
+    formDevolucion?.reset();
+    setMsg(msgDevolucion, "", "text-muted");
+  });
+
+  // Cambio en select devolución → actualizar cantidad
+  dPrestamo?.addEventListener("change", () => {
+    const opt = dPrestamo.selectedOptions?.[0];
+    const pend = Number(opt?.getAttribute("data-pendiente") || 0);
+    if (dCant) dCant.value = pend ? String(pend) : "1";
+  });
+
+  // ===== Modal Selector → redirigir al modal correcto =====
+  function abrirDesdeSelector(targetModalId) {
+    bootstrap.Modal.getOrCreateInstance(document.getElementById("modalSelector")).hide();
+    setTimeout(() => {
+      bootstrap.Modal.getOrCreateInstance(document.getElementById(targetModalId)).show();
+    }, 200);
+  }
+
+  document.getElementById("selPrestamo")?.addEventListener("click", () => abrirDesdeSelector("modalConsumo"));
+  document.getElementById("selDevolucion")?.addEventListener("click", () => abrirDesdeSelector("modalDevolucion"));
+  document.getElementById("selVenta")?.addEventListener("click", () => abrirDesdeSelector("modalVenta"));
+  document.getElementById("selIngreso")?.addEventListener("click", () => abrirDesdeSelector("modalIngreso"));
+
+  // Limpiar preItem al cerrar selector
+  document.getElementById("modalSelector")?.addEventListener("hidden.bs.modal", () => {
+    delete document.getElementById("modalSelector").dataset.preItem;
+  });
+
+  // ===== Botones de filtros =====
+  document.getElementById("btnReloadInv")?.addEventListener("click", recargarTodo);
+  document.getElementById("btnBuscarItems")?.addEventListener("click", cargarItems);
+  document.getElementById("btnLimpiarItems")?.addEventListener("click", async () => {
+    if (qItem) qItem.value = "";
+    if (fEstado) fEstado.value = "";
+    await cargarItems();
+  });
+  document.getElementById("btnKBuscar")?.addEventListener("click", cargarKardex);
+  document.getElementById("btnKLimpiar")?.addEventListener("click", async () => {
+    if (kTipo) kTipo.value = "";
+    if (kDesde) kDesde.value = "";
+    if (kHasta) kHasta.value = "";
+    await cargarKardex();
+  });
+  document.getElementById("btnRBuscar")?.addEventListener("click", cargarResumenRango);
+  document.getElementById("btnRLimp")?.addEventListener("click", async () => {
+    if (rDesde) rDesde.value = "";
+    if (rHasta) rHasta.value = "";
+    await cargarResumenRango();
+  });
+
+  // Búsqueda con Enter
+  qItem?.addEventListener("keydown", (e) => { if (e.key === "Enter") cargarItems(); });
+
+  // ===== INIT =====
+  document.addEventListener("DOMContentLoaded", async () => {
+    try {
+      setMsg(msgInv, "Cargando…", "text-muted");
+      [cursosCache, instructoresCache] = await Promise.all([apiGetCursos(), apiGetInstructores()]);
+
+      fillSelect(csCurso, cursosCache, x => x.nombre, true, "— Sin curso —");
+      fillSelect(csInstructor, instructoresCache, x => x.nombre, true, "— Selecciona profesor —");
+      fillSelect(vCurso, cursosCache, x => x.nombre, true, "— Sin curso —");
+      fillSelect(vInstructor, instructoresCache, x => x.nombre, true, "— Sin profesor —");
+
+      await recargarTodo();
+    } catch (err) {
+      console.error(err);
+      setMsg(msgInv, "Error al cargar: " + (err.message || "desconocido"), "text-danger");
+    }
+  });
+
 })();

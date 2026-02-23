@@ -72,10 +72,13 @@ function cursoEsDisponible(estadoCurso) {
   return e === "programado" || e === "en curso" || e === "encurso";
 }
 
-// ✅ Inscripciones: Activa | Inactiva (tu front usa "Activa")
+// ✅ Inscripciones estados válidos: Activa | Finalizada | Cancelada (schema DB)
+// Normaliza valores del frontend (que puede mandar 'Inactiva') a valores válidos del schema
 function normalizeEstadoInscripcion(v) {
   const s = String(v || "").trim().toLowerCase();
-  if (s === "inactiva" || s === "inactivo") return "Inactiva";
+  if (s === "cancelada" || s === "cancelado") return "Cancelada";
+  if (s === "finalizada" || s === "finalizado") return "Finalizada";
+  if (s === "inactiva" || s === "inactivo") return "Cancelada"; // mapear Inactiva→Cancelada
   return "Activa";
 }
 
@@ -168,8 +171,15 @@ router.get("/", async (req, res) => {
     }
     if (estado) {
       const est = normalizeEstadoInscripcion(estado);
-      where.push("i.estado = ?");
-      params.push(est);
+      if (est === "Activa") {
+        where.push("i.estado = 'Activa'");
+      } else if (est === "Cancelada") {
+        // Incluir también 'Inactiva' por compatibilidad con datos legacy
+        where.push("i.estado IN ('Cancelada', 'Inactiva')");
+      } else {
+        where.push("i.estado = ?");
+        params.push(est);
+      }
     }
     if (q) {
       where.push("(a.nombre LIKE ? OR a.documento LIKE ? OR c.nombre LIKE ?)");
@@ -201,6 +211,7 @@ router.get("/", async (req, res) => {
         a.nombre AS alumno_nombre,
         a.documento AS alumno_documento,
         a.telefono AS alumno_telefono,
+        a.email AS alumno_email,
 
         c.id AS curso_id,
         c.nombre AS curso_nombre,
@@ -281,6 +292,7 @@ router.get("/:id", async (req, res) => {
         a.nombre AS alumno_nombre,
         a.documento AS alumno_documento,
         a.telefono AS alumno_telefono,
+        a.email AS alumno_email,
 
         c.id AS curso_id,
         c.nombre AS curso_nombre,
@@ -377,7 +389,7 @@ router.put("/:id", adminOnly, async (req, res) => {
     const newFecha = normStr(req.body?.fecha_inscripcion) || current.fecha_inscripcion || todayISO();
 
     // reactivar: valida curso disponible + cupo + duplicado activo
-    if (current.estado === "Inactiva" && newEstado === "Activa") {
+    if (current.estado !== "Activa" && newEstado === "Activa") {
       const cCheck = await getCurso(current.curso_id);
       if (!cCheck.ok) return res.status(cCheck.code).json({ ok: false, error: cCheck.error });
 
@@ -411,7 +423,7 @@ router.delete("/:id", adminOnly, async (req, res) => {
     const exists = await dbGet(`SELECT id FROM inscripciones WHERE id = ?`, [id]);
     if (!exists) return res.status(404).json({ ok: false, error: "Inscripción no encontrada" });
 
-    await dbRun(`UPDATE inscripciones SET estado = 'Inactiva' WHERE id = ?`, [id]);
+    await dbRun(`UPDATE inscripciones SET estado = 'Cancelada' WHERE id = ?`, [id]);
     return res.json({ ok: true });
   } catch (err) {
     console.error("[INSCRIPCIONES][DELETE]", err);

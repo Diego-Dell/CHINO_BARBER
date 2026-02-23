@@ -5,442 +5,560 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dashboard — Barber School</title>
 
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="assets/vendor/bootstrap.min.css" rel="stylesheet" />
   <link rel="stylesheet" href="css/styles.css" />
   <link rel="icon" type="image/x-icon" href="assets/img/logo.ico">
 
 <style>
+/* ============================================================
+   DASHBOARD V2 — Diseño profesional completo
+   ============================================================ */
+:root {
+  --clr-blue:   #0d6efd;
+  --clr-green:  #198754;
+  --clr-amber:  #f59e0b;
+  --clr-red:    #dc3545;
+  --clr-purple: #6f42c1;
+  --glass:      rgba(255,255,255,.84);
+  --border:     rgba(16,24,40,.09);
+  --shadow-sm:  0 2px 8px rgba(16,24,40,.06);
+  --shadow-md:  0 8px 28px rgba(16,24,40,.09);
+  --shadow-lg:  0 16px 48px rgba(16,24,40,.12);
+  --radius-md:  18px;
+}
 
-  /* ===== Dashboard UI Upgrade (solo index) ===== */
-  :root{
-    --glass: rgba(255,255,255,.70);
-    --border: rgba(16,24,40,.10);
-    --shadow: 0 14px 40px rgba(16,24,40,.08);
-    --shadow2: 0 8px 20px rgba(16,24,40,.06);
-    --radius: 18px;
-  }
+html, body { max-width:100%; overflow-x:hidden; }
 
-  .page-title { letter-spacing: .2px; }
+.main-content {
+  background:
+    radial-gradient(800px 350px at 10% 0%,   rgba(13,110,253,.10), transparent 60%),
+    radial-gradient(800px 450px at 90% 5%,   rgba(25,135,84,.08),  transparent 55%),
+    radial-gradient(700px 400px at 60% 100%, rgba(245,158,11,.09), transparent 55%),
+    #f4f6fb;
+  min-height: 100vh;
+}
 
-  /* Fondo suave tipo "premium" */
-  .main-content{
-    background:
-      radial-gradient(900px 400px at 18% 0%, rgba(13,110,253,.10), transparent 60%),
-      radial-gradient(900px 500px at 82% 10%, rgba(25,135,84,.08), transparent 55%),
-      radial-gradient(900px 500px at 70% 95%, rgba(255,193,7,.10), transparent 55%);
-  }
+.card-dash {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-md);
+  transition: box-shadow .2s;
+}
+.card-dash:hover { box-shadow: var(--shadow-lg); }
 
-  .soft-card {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    background: var(--glass);
-    backdrop-filter: blur(10px);
-  }
+.kpi-card { min-height:128px; overflow:hidden; position:relative; }
+.kpi-card::before {
+  content:""; position:absolute; top:-60px; right:-60px;
+  width:200px; height:200px; border-radius:999px;
+  background:radial-gradient(circle, rgba(255,255,255,.45), transparent 65%);
+  pointer-events:none;
+}
+.kpi-icon {
+  width:52px; height:52px; border-radius:15px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:22px; flex-shrink:0;
+  border:1px solid rgba(0,0,0,.08); box-shadow:var(--shadow-sm);
+}
+.kpi-label { font-size:11px; color:#6c757d; font-weight:600; letter-spacing:.4px; text-transform:uppercase; }
+.kpi-value { font-size:28px; font-weight:800; line-height:1.1; color:#111827; }
+.kpi-sub   { font-size:12px; color:#6c757d; }
 
-  .kpi-card { min-height: 116px; overflow:hidden; position: relative; }
-  .kpi-card::after{
-    content:"";
-    position:absolute; inset:-80px -120px auto auto;
-    width:220px; height:220px; border-radius:999px;
-    background: radial-gradient(circle, rgba(255,255,255,.50), transparent 60%);
-    transform: rotate(12deg);
-    pointer-events:none;
-  }
+.var-badge {
+  display:inline-flex; align-items:center; gap:3px;
+  font-size:11.5px; font-weight:600; padding:2px 8px; border-radius:999px;
+}
+.var-up   { background:rgba(25,135,84,.12);  color:#198754; }
+.var-down { background:rgba(220,53,69,.12);  color:#dc3545; }
+.var-eq   { background:rgba(108,117,125,.12); color:#6c757d; }
 
-  .kpi-icon{
-    width:48px;height:48px;border-radius:16px;
-    display:flex;align-items:center;justify-content:center;
-    border:1px solid rgba(0,0,0,.10);
-    font-size:18px;
-    box-shadow: var(--shadow2);
-  }
+.section-title { font-size:14px; font-weight:700; color:#111827; }
+.section-sub   { font-size:12px; color:#6c757d; }
 
-  .kpi-label{ font-size:12px; color:#6c757d; }
-  .kpi-value{ font-weight:800; font-size:28px; line-height:1.05; }
-  .pill{
-    display:inline-flex; gap:8px; align-items:center;
-    padding:6px 10px; border-radius:999px;
-    border:1px solid rgba(0,0,0,.10);
-    background: rgba(255,255,255,.75);
-    font-size:12px;
-    box-shadow: 0 6px 14px rgba(16,24,40,.06);
-  }
+.pill-tag {
+  display:inline-flex; gap:6px; align-items:center;
+  padding:5px 10px; border-radius:999px;
+  border:1px solid rgba(0,0,0,.08);
+  background:rgba(255,255,255,.80);
+  font-size:12px; box-shadow:var(--shadow-sm);
+}
 
-  .chart-wrap{ min-height: 270px; }
-  canvas{ user-select:none; }
+/* Actividad reciente */
+.activity-item {
+  display:flex; align-items:flex-start; gap:12px;
+  padding:10px 0; border-bottom:1px solid rgba(16,24,40,.06);
+}
+.activity-item:last-child { border-bottom:none; padding-bottom:0; }
+.act-icon {
+  width:36px; height:36px; border-radius:12px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:15px; flex-shrink:0;
+  border:1px solid rgba(0,0,0,.07);
+}
+.act-title { font-size:13px; font-weight:600; color:#111827; line-height:1.3; }
+.act-meta  { font-size:11.5px; color:#6c757d; margin-top:1px; }
+.act-right { margin-left:auto; text-align:right; flex-shrink:0; }
 
-  /* ===== Panel tipo agenda ===== */
-  .schedule-wrap{
-    display:flex;
-    gap:14px;
-    overflow-x:auto;
-    padding: 6px 2px 10px;
-    scroll-snap-type: x mandatory;
-  }
-  .schedule-wrap::-webkit-scrollbar{ height:10px; }
-  .schedule-wrap::-webkit-scrollbar-thumb{
-    background: rgba(16,24,40,.18);
-    border-radius: 999px;
-  }
-  .schedule-wrap::-webkit-scrollbar-track{
-    background: rgba(16,24,40,.06);
-    border-radius: 999px;
-  }
+.st-badge { font-size:10.5px; font-weight:600; padding:2px 7px; border-radius:999px; }
+.st-pagado   { background:rgba(25,135,84,.12); color:#198754; }
+.st-pendiente{ background:rgba(245,158,11,.14); color:#b45309; }
+.st-activa   { background:rgba(13,110,253,.10); color:#0d6efd; }
+.st-default  { background:rgba(108,117,125,.10); color:#6c757d; }
 
-  .schedule-col{
-    min-width:320px;
-    max-width:380px;
-    flex:0 0 auto;
-    scroll-snap-align: start;
-  }
+/* Top prestamos */
+.top-prest-row {
+  display:flex; align-items:center; gap:10px;
+  padding:8px 0; border-bottom:1px solid rgba(16,24,40,.06);
+}
+.top-prest-row:last-child { border-bottom:none; }
+.rank-badge {
+  width:24px; height:24px; border-radius:8px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:11px; font-weight:700; flex-shrink:0;
+}
 
-  .schedule-card{
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: rgba(255,255,255,.78);
-    box-shadow: var(--shadow2);
-    overflow:hidden;
-  }
+/* Stock alert rows */
+.stock-row {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:8px 0; border-bottom:1px solid rgba(16,24,40,.06); gap:8px;
+}
+.stock-row:last-child { border-bottom:none; }
 
-  .schedule-top{
-    padding: 12px 14px 10px;
-    display:flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap:10px;
-  }
+/* Cursos panel */
+.schedule-wrap {
+  display:flex; gap:14px; overflow-x:auto;
+  padding:4px 2px 12px; scroll-snap-type:x mandatory;
+}
+.schedule-wrap::-webkit-scrollbar { height:6px; }
+.schedule-wrap::-webkit-scrollbar-thumb {
+  background:rgba(16,24,40,.18); border-radius:999px;
+}
+.schedule-col {
+  min-width:310px; max-width:370px;
+  flex:0 0 auto; scroll-snap-align:start;
+}
+.schedule-card {
+  border:1px solid var(--border); border-radius:var(--radius-md);
+  background:rgba(255,255,255,.82); box-shadow:var(--shadow-sm); overflow:hidden;
+}
+.course-stripe { height:4px; background:var(--courseColor, var(--clr-blue)); }
+.schedule-body-inner { padding:14px; }
+.schedule-title { font-weight:800; font-size:14px; line-height:1.2; }
+.schedule-meta {
+  font-size:12px; color:#495057;
+  display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;
+}
+.meta-chip {
+  background:rgba(255,255,255,.9); border:1px solid rgba(16,24,40,.10);
+  border-radius:999px; padding:3px 9px;
+}
+.students-grid { display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; }
+.student-chip {
+  display:inline-flex; align-items:center; gap:7px;
+  font-size:12px; padding:5px 10px; border-radius:999px;
+  background:rgba(13,110,253,.07); border:1px solid rgba(13,110,253,.15); white-space:nowrap;
+}
+.student-avatar {
+  width:22px; height:22px; border-radius:999px;
+  display:inline-flex; align-items:center; justify-content:center;
+  background:rgba(255,255,255,.8); border:1px solid rgba(16,24,40,.12);
+  font-weight:800; font-size:10px;
+}
+.student-chip.more { background:rgba(108,117,125,.08); border-color:rgba(108,117,125,.18); }
 
-  .course-dot{
-    width:10px;height:10px;border-radius:999px;
-    background: var(--courseColor, rgba(13,110,253,.9));
-    box-shadow: 0 0 0 4px rgba(13,110,253,.12);
-    margin-top: 6px;
-  }
+.empty-state {
+  border:1px dashed rgba(16,24,40,.18); background:rgba(255,255,255,.6);
+  border-radius:12px; padding:16px; color:#6c757d; text-align:center; font-size:13px;
+}
 
-  .schedule-title{
-    font-weight:800;
-    line-height:1.12;
-  }
-  .schedule-sub{
-    font-size:18px;
-    color: #000;;
-    margin-top: 2px;
-  }
+.btn { border-radius:12px; }
 
-  .schedule-meta{
-    font-size:12px;
-    color:#495057;
-    display:flex;
-    gap:8px;
-    flex-wrap:wrap;
-    margin-top: 8px;
-  }
-  .meta-pill{
-    border:1px solid rgba(16,24,40,.12);
-    background: rgba(255,255,255,.8);
-    padding:4px 8px;
-    border-radius: 999px;
-  }
+@media (max-width:575.98px) {
+  .kpi-value { font-size:1.4rem; }
+  .schedule-col { min-width:0; max-width:100%; }
+  .schedule-wrap { flex-direction:column; overflow-x:visible; scroll-snap-type:none; }
+}
+@media (min-width:576px) and (max-width:991.98px) {
+  .schedule-col { min-width:270px; max-width:330px; }
+}
 
-  .schedule-body{
-    padding: 12px 14px 14px;
-    border-top: 1px solid rgba(16,24,40,.08);
-  }
-
-  .students-grid{
-    display:flex;
-    flex-wrap:wrap;
-    gap:8px;
-    margin-top: 8px;
-  }
-
-  .student-chip{
-    display:inline-flex;
-    align-items:center;
-    gap:8px;
-    font-size:12px;
-    padding: 6px 10px;
-    border-radius: 999px;
-    background: rgba(13,110,253,.08);
-    border: 1px solid rgba(13,110,253,.16);
-    white-space:nowrap;
-  }
-  .student-chip .avatar{
-    width:22px; height:22px; border-radius:999px;
-    display:inline-flex; align-items:center; justify-content:center;
-    background: rgba(255,255,255,.75);
-    border:1px solid rgba(16,24,40,.12);
-    font-weight:800;
-    font-size:11px;
-  }
-
-  .student-chip.more{
-    background: rgba(108,117,125,.08);
-    border-color: rgba(108,117,125,.18);
-  }
-
-  .empty-state{
-    border: 1px dashed rgba(16,24,40,.18);
-    background: rgba(255,255,255,.6);
-    border-radius: var(--radius);
-    padding: 14px;
-    color:#6c757d;
-  }
-
-  /* Botones top: más “clean” */
-  .btn{ border-radius: 12px; }
-  .btn-primary{
-    box-shadow: 0 10px 26px rgba(13,110,253,.22);
-  }
-
-
-  /* ===== Responsive ajustes (solo index, sin cambiar nombres) ===== */
-  /* Evita scroll horizontal accidental */
-  html, body { max-width: 100%; overflow-x: hidden; }
-
-  /* Canvas responsive */
-  .chart-wrap{ position: relative; width: 100%; }
-  .chart-wrap canvas{ display:block; width:100% !important; max-width:100%; height:auto !important; }
-
-  /* Mejor wrap de pills/botones */
-  .pill{ max-width: 100%; }
-  .pill .text-muted{ white-space: normal; }
-
-  /* Agenda: en pantallas chicas se apila (sin perder funcionalidad) */
-  @media (max-width: 575.98px){
-    .page-title{ font-size: 1.25rem; }
-    .kpi-value{ font-size: 1.35rem; }
-    .kpi-card .card-body{ gap: 10px; }
-    .kpi-icon{ width: 46px; height: 46px; font-size: 22px; }
-
-    /* spacing más compacto */
-    .soft-card .card-body{ padding: 14px; }
-
-    /* Agenda apilada */
-    .schedule-wrap{
-      flex-direction: column;
-      overflow-x: visible;
-      padding-bottom: 0;
-      scroll-snap-type: none;
-    }
-    .schedule-col{
-      min-width: 0;
-      max-width: 100%;
-      flex: 1 1 auto;
-    }
-
-    /* chips de alumnos no deben forzar overflow */
-    .students-grid{ gap: 6px; }
-    .student-chip{ max-width: 100%; }
-  }
-
-  /* Tablets: reduce el “min-width” para menos scroll horizontal */
-  @media (min-width: 576px) and (max-width: 991.98px){
-    .schedule-col{ min-width: 280px; max-width: 340px; }
-  }
-
+/* ─── Update Banner ────────────────────────────────────────── */
+.update-banner {
+  border-radius: 12px;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0,0,0,.15);
+}
+.update-banner-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #1e3a5f, #0d6efd);
+  color: #fff;
+}
+.update-banner.success .update-banner-inner { background: linear-gradient(135deg, #064e3b, #059669); }
+.update-banner.warning .update-banner-inner { background: linear-gradient(135deg, #78350f, #d97706); }
+.update-banner.danger  .update-banner-inner { background: linear-gradient(135deg, #7f1d1d, #dc2626); }
+.update-icon  { font-size: 1.3rem; flex-shrink: 0; }
+.update-text  { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.update-msg   { font-size: .88rem; font-weight: 600; }
+.update-progress-wrap { display: flex; align-items: center; gap: 8px; }
+.update-progress-bar  { flex: 1; height: 6px; background: rgba(255,255,255,.25); border-radius: 3px; overflow: hidden; }
+.update-progress-fill { height: 100%; background: #fff; border-radius: 3px; transition: width .3s ease; }
+.update-progress-pct  { font-size: .75rem; opacity: .9; white-space: nowrap; min-width: 32px; }
+.update-close {
+  background: none; border: none; color: rgba(255,255,255,.7);
+  font-size: 1rem; cursor: pointer; padding: 2px 6px; border-radius: 6px;
+  transition: background .15s;
+}
+.update-close:hover { background: rgba(255,255,255,.2); color: #fff; }
 </style>
-
 </head>
 
 <body class="bg-light">
-  <div class="d-flex">
+<div class="d-flex">
 
-    <!-- SIDEBAR -->
-    <aside id="sidebar" class="sidebar shadow-sm">
-      <div class="sidebar-header d-flex align-items-center justify-content-between">
-        <div class="d-flex align-items-center gap-2">
-          <img
-            src="assets/img/FONDO CLARO.png"
-            class="brand-logo"
-            alt="Logo"
-            style="width:120px;height:120px;padding:0;background:transparent;border-radius:0;object-fit:contain;"
-          >
-          <div class="lh-1">
-            <span class="fw-semibold brand-name">Develop by Diego Dell</span>
-            <small class="text-muted d-block">Barber School</small>
-          </div>
+  <!-- SIDEBAR -->
+  <aside id="sidebar" class="sidebar shadow-sm">
+    <div class="sidebar-header d-flex align-items-center justify-content-between">
+      <div class="d-flex align-items-center gap-2">
+        <img src="assets/img/FONDO CLARO.png" class="brand-logo" alt="Logo"
+             style="width:120px;height:120px;padding:0;background:transparent;border-radius:0;object-fit:contain;">
+        <div class="lh-1">
+          <span class="fw-semibold brand-name">Develop by Diego Dell</span>
+          <small class="text-muted d-block">Barber School</small>
         </div>
-        <button class="btn btn-sm btn-outline-secondary d-lg-none" onclick="toggleSidebar()">✖</button>
       </div>
+      <button class="btn btn-sm btn-outline-secondary d-lg-none" onclick="toggleSidebar()">✖</button>
+    </div>
+    <div class="sidebar-section">
+      <p class="sidebar-title">General</p>
+      <nav class="nav flex-column sidebar-nav">
+        <a href="index.html" class="nav-link active">📊 Dashboard</a>
+      </nav>
+    </div>
+    <div class="sidebar-section mt-3">
+      <p class="sidebar-title">Gestión académica</p>
+      <nav class="nav flex-column sidebar-nav">
+        <a href="alumnos.html"      class="nav-link">👥 Alumnos</a>
+        <a href="cursos.html"       class="nav-link">📚 Cursos</a>
+        <a href="instructores.html" class="nav-link">🧑‍🏫 Instructores</a>
+        <a href="asistencia.html"   class="nav-link">🗓️ Asistencia</a>
+      </nav>
+    </div>
+    <div class="sidebar-section mt-3">
+      <p class="sidebar-title">Finanzas</p>
+      <nav class="nav flex-column sidebar-nav">
+        <a href="pagos.html"    class="nav-link">💵 Pagos</a>
+        <a href="deudores.html" class="nav-link">⚠️ Deudores</a>
+      </nav>
+    </div>
+    <div class="sidebar-section mt-3">
+      <p class="sidebar-title">Operación</p>
+      <nav class="nav flex-column sidebar-nav">
+        <a href="inventario.html" class="nav-link">📦 Inventario</a>
+        <a href="reportes.html"   class="nav-link">📈 Reportes</a>
+      </nav>
+    </div>
+  </aside>
 
-      <div class="sidebar-section">
-        <p class="sidebar-title">General</p>
-        <nav class="nav flex-column sidebar-nav">
-          <a href="index.html" class="nav-link active">📊 Dashboard</a>
-        </nav>
-      </div>
+  <div id="overlay" class="overlay d-lg-none" onclick="toggleSidebar()"></div>
 
-      <div class="sidebar-section mt-3">
-        <p class="sidebar-title">Gestión académica</p>
-        <nav class="nav flex-column sidebar-nav">
-          <a href="alumnos.html" class="nav-link">👥 Alumnos</a>
-          <a href="cursos.html" class="nav-link">📚 Cursos</a>
-          <a href="instructores.html" class="nav-link">🧑‍🏫 Instructores</a>
-          <a href="asistencia.html" class="nav-link">🗓️ Asistencia</a>
-        </nav>
-      </div>
+  <!-- MAIN -->
+  <main class="main-content flex-grow-1">
+    <div class="container-fluid py-4">
 
-      <div class="sidebar-section mt-3">
-        <p class="sidebar-title">Finanzas</p>
-        <nav class="nav flex-column sidebar-nav">
-          <a href="pagos.html" class="nav-link">💵 Pagos</a>
-          <a href="deudores.html" class="nav-link">⚠️ Deudores</a>
-        </nav>
-      </div>
-
-      <div class="sidebar-section mt-3">
-        <p class="sidebar-title">Operación</p>
-        <nav class="nav flex-column sidebar-nav">
-          <a href="inventario.html" class="nav-link">📦 Inventario</a>
-          <a href="reportes.html" class="nav-link">📈 Reportes</a>
-        </nav>
-      </div>
-    </aside>
-
-    <div id="overlay" class="overlay d-lg-none" onclick="toggleSidebar()"></div>
-
-    <!-- MAIN -->
-    <main class="main-content flex-grow-1">
-      <div class="container-fluid py-4">
-
-        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-          <div>
-            <div class="d-flex align-items-center gap-2">
-              <h3 class="mb-0 page-title">Dashboard</h3>
-              <span class="pill">📌 <span class="text-muted">Resumen del mes</span></span>
+      <!-- ─── Banner de actualización ─────────────────────────── -->
+      <div id="updateBanner" class="update-banner d-none mb-3" role="alert">
+        <div class="update-banner-inner">
+          <span id="updateIcon" class="update-icon">🔄</span>
+          <div class="update-text">
+            <span id="updateMsg" class="update-msg">Verificando actualizaciones…</span>
+            <div id="updateProgress" class="update-progress-wrap d-none">
+              <div class="update-progress-bar">
+                <div id="updateProgressBar" class="update-progress-fill" style="width:0%"></div>
+              </div>
+              <span id="updateProgressPct" class="update-progress-pct">0%</span>
             </div>
-            <div class="text-muted small">Vista rápida de ingresos, alumnos y actividad general del sistema.</div>
           </div>
-
-          <div class="d-flex gap-2 flex-wrap">
-            <a href="pagos.html" class="btn btn-primary btn-sm">➕ Registrar pago</a>
-            <a href="alumnos.html" class="btn btn-outline-primary btn-sm">➕ Nuevo alumno</a>
-            <a href="reportes.html" class="btn btn-outline-secondary btn-sm">📈 Ver reportes</a>
-          </div>
+          <button id="updateInstallBtn" class="btn btn-success btn-sm d-none" onclick="updaterInstall()">
+            ⚡ Reiniciar y actualizar
+          </button>
+          <button id="updateCheckBtn" class="btn btn-outline-light btn-sm d-none" onclick="updaterCheck()">
+            🔍 Buscar ahora
+          </button>
+          <button class="update-close" onclick="closeBanner()" title="Cerrar">✕</button>
         </div>
+      </div>
 
-        <!-- KPI CARDS -->
-        <div class="row g-3">
-          <div class="col-lg-4">
-            <div class="card kpi-card soft-card">
-              <div class="card-body d-flex align-items-center gap-3">
-                <div class="kpi-icon" style="background: rgba(13,110,253,.08); border-color: rgba(13,110,253,.15);">💵</div>
-                <div class="flex-grow-1">
-                  <div class="kpi-label">Ingresos del mes</div>
-                  <div id="kpiIngresosMes" class="kpi-value">Bs 0.00</div>
-                  <div class="kpi-label">Solo pagos con estado “Pagado”</div>
-                </div>
-              </div>
-            </div>
+      <!-- Header -->
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+        <div>
+          <div class="d-flex align-items-center gap-2">
+            <h3 class="mb-0 fw-bold" style="font-size:1.5rem;color:#111827;">Dashboard</h3>
+            <span class="pill-tag" id="headerMes">📅 <span class="text-muted">cargando…</span></span>
           </div>
+          <div class="text-muted small mt-1">Vista operativa del mes · datos en tiempo real</div>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+          <a href="pagos.html"    class="btn btn-primary btn-sm">💵 Registrar pago</a>
+          <a href="alumnos.html"  class="btn btn-outline-primary btn-sm">👤 Nuevo alumno</a>
+          <a href="reportes.html" class="btn btn-outline-secondary btn-sm">📈 Reportes</a>
+          <button onclick="dashboardInit()" class="btn btn-outline-secondary btn-sm" title="Actualizar">🔄</button>
+        </div>
+      </div>
 
-          <div class="col-lg-4">
-            <div class="card kpi-card soft-card">
-              <div class="card-body d-flex align-items-center gap-3">
-                <div class="kpi-icon" style="background: rgba(25,135,84,.08); border-color: rgba(25,135,84,.15);">👥</div>
-                <div class="flex-grow-1">
-                  <div class="kpi-label">Total alumnos</div>
-                  <div id="kpiAlumnos" class="kpi-value">0</div>
-                  <div class="d-flex gap-2 flex-wrap mt-1">
-                    <span class="badge rounded-pill text-bg-success">Activos: <span id="kpiAlumnosActivos">0</span></span>
-                    <span class="badge rounded-pill text-bg-secondary">Inactivos: <span id="kpiAlumnosInactivos">0</span></span>
-                  </div>
-                  <div class="kpi-label mt-1">Contador general</div>
-                </div>
-              </div>
-            </div>
-          </div>
+      <!-- ROW 1: KPI Cards -->
+      <div class="row g-3 mb-3">
 
-          <div class="col-lg-4">
-            <div class="card kpi-card soft-card">
-              <div class="card-body d-flex align-items-center gap-3">
-                <div class="kpi-icon" style="background: rgba(255,193,7,.12); border-color: rgba(255,193,7,.18);">🧾</div>
-                <div class="flex-grow-1">
-                  <div class="kpi-label">Total pagos registrados</div>
-                  <div id="kpiPagos" class="kpi-value">0</div>
-                  <div class="kpi-label">Incluye pagados/pendientes/anulados</div>
+        <div class="col-sm-6 col-xl-3">
+          <div class="card card-dash kpi-card h-100">
+            <div class="card-body d-flex align-items-start gap-3 p-3">
+              <div class="kpi-icon" style="background:rgba(13,110,253,.09);border-color:rgba(13,110,253,.15);">💵</div>
+              <div class="flex-grow-1 min-w-0">
+                <div class="kpi-label mb-1">Ingresos del mes</div>
+                <div id="kpiIngresosMes" class="kpi-value">Bs —</div>
+                <div class="d-flex align-items-center gap-2 mt-1 flex-wrap">
+                  <span id="kpiIngresosVar" class="var-badge var-eq">—</span>
+                  <span id="kpiIngresosCnt" class="kpi-sub">— pagos</span>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Gráfico + Accesos rápidos -->
-        <div class="row g-3 mt-1">
-          <div class="col-lg-8">
-            <div class="card soft-card">
-              <div class="card-body">
-                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
-                  <div>
-                    <div class="fw-semibold">Ingresos últimos 12 meses</div>
-                    <div class="text-muted small">Tendencia de pagos “Pagado” por mes</div>
-                  </div>
-                  <span class="pill">📊 <span class="text-muted">Chart</span></span>
+        <div class="col-sm-6 col-xl-3">
+          <div class="card card-dash kpi-card h-100">
+            <div class="card-body d-flex align-items-start gap-3 p-3">
+              <div class="kpi-icon" style="background:rgba(25,135,84,.09);border-color:rgba(25,135,84,.15);">👥</div>
+              <div class="flex-grow-1 min-w-0">
+                <div class="kpi-label mb-1">Alumnos</div>
+                <div id="kpiAlumnos" class="kpi-value">—</div>
+                <div class="d-flex gap-2 mt-1 flex-wrap">
+                  <span class="badge rounded-pill text-bg-success">Activos: <span id="kpiActivos">—</span></span>
+                  <span class="badge rounded-pill text-bg-secondary">Inactivos: <span id="kpiInactivos">—</span></span>
                 </div>
-                <div class="chart-wrap">
-                  <canvas id="chartIngresos12m"></canvas>
-                </div>
+                <div id="kpiNuevosMes" class="kpi-sub mt-1">— nuevos este mes</div>
               </div>
             </div>
-          </div>
-
-          <div class="col-lg-4">
-            <div class="card soft-card">
-              <div class="card-body">
-                <div class="fw-semibold" style="text-align: center;font-size: large;">Accesos rápidos</div>
-
-
-                <div class="d-grid gap-2">
-                  <a href="pagos.html" class="btn btn-primary btn-sm">💵 Registrar pago</a>
-                  <a href="alumnos.html" class="btn btn-outline-primary btn-sm">👥 Gestionar alumnos</a>
-                  <a href="cursos.html" class="btn btn-outline-secondary btn-sm">📚 Ver cursos</a>
-                  <a href="inventario.html" class="btn btn-outline-secondary btn-sm">📦 Materiales</a>
-                </div>
-              </div>
-            </div>
-
           </div>
         </div>
 
-        <!-- Panel de clases (tipo agenda) -->
-        <div class="card soft-card mt-3">
-          <div class="card-body">
-            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
-              <div>
-                <div class="fw-semibold">Clases en curso (hoy)</div>
-                <div id="panelCursosSub" class="text-muted small">—</div>
+        <div class="col-sm-6 col-xl-3">
+          <div class="card card-dash kpi-card h-100">
+            <div class="card-body d-flex align-items-start gap-3 p-3">
+              <div class="kpi-icon" style="background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.18);">📦</div>
+              <div class="flex-grow-1 min-w-0">
+                <div class="kpi-label mb-1">Materiales prestados</div>
+                <div id="kpiPrestamosUnidades" class="kpi-value">—</div>
+                <div id="kpiPrestamosCount"    class="kpi-sub">— préstamos activos</div>
+                <div id="kpiPrestamosTop"      class="kpi-sub mt-1" style="font-size:11px;color:#b45309;"></div>
               </div>
-              <button id="btnRefrescarPanel" class="btn btn-outline-primary btn-sm">🔄 Actualizar</button>
             </div>
+          </div>
+        </div>
 
-            <div id="panelCursos" class="schedule-wrap">
-              <div class="text-muted">Cargando…</div>
+        <div class="col-sm-6 col-xl-3">
+          <div class="card card-dash kpi-card h-100">
+            <div class="card-body d-flex align-items-start gap-3 p-3">
+              <div class="kpi-icon" style="background:rgba(220,53,69,.09);border-color:rgba(220,53,69,.15);">⚠️</div>
+              <div class="flex-grow-1 min-w-0">
+                <div class="kpi-label mb-1">Stock bajo</div>
+                <div id="kpiAlertasCount" class="kpi-value">—</div>
+                <div class="kpi-sub">materiales bajo mínimo</div>
+                <a href="inventario.html" class="kpi-sub text-danger text-decoration-none mt-1 d-block" style="font-size:11px;">Ver inventario →</a>
+              </div>
             </div>
           </div>
         </div>
 
       </div>
-    </main>
-  </div>
 
-  <script>
-    function toggleSidebar() {
-      document.getElementById("sidebar").classList.toggle("open");
-      document.getElementById("overlay").classList.toggle("show");
-    }
-    document.addEventListener("DOMContentLoaded", () => {
-      const el = document.getElementById("lastUpdate");
-      if (el) {
-        const d = new Date();
-        el.textContent = d.toLocaleString();
+      <!-- ROW 2: Actividad Reciente + Panel derechas -->
+      <div class="row g-3 mb-3">
+
+        <!-- Actividad Reciente -->
+        <div class="col-lg-7">
+          <div class="card card-dash h-100">
+            <div class="card-body p-3">
+              <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                <div>
+                  <div class="section-title">Actividad reciente</div>
+                  <div class="section-sub">Últimos registros del sistema</div>
+                </div>
+                <div class="btn-group btn-group-sm" role="group">
+                  <button type="button" class="btn btn-primary act-tab" data-tab="pagos">💵 Pagos</button>
+                  <button type="button" class="btn btn-outline-primary act-tab" data-tab="inscripciones">📋 Inscripciones</button>
+                  <button type="button" class="btn btn-outline-primary act-tab" data-tab="prestamos">📦 Préstamos</button>
+                </div>
+              </div>
+              <div id="actPagos"          class="act-panel"></div>
+              <div id="actInscripciones"  class="act-panel d-none"></div>
+              <div id="actPrestamos"      class="act-panel d-none"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top préstamos + Alertas stock -->
+        <div class="col-lg-5 d-flex flex-column gap-3">
+          <div class="card card-dash flex-grow-1">
+            <div class="card-body p-3">
+              <div class="section-title mb-1">Top materiales prestados</div>
+              <div class="section-sub mb-3">Con mayor cantidad activa sin devolver</div>
+              <div id="topPrestamos">
+                <div class="empty-state">Sin préstamos activos</div>
+              </div>
+            </div>
+          </div>
+          <div class="card card-dash flex-grow-1">
+            <div class="card-body p-3">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <div class="section-title">Alertas de stock</div>
+                <a href="inventario.html" class="btn btn-outline-danger btn-sm" style="font-size:11px;padding:3px 8px;">Ver todo</a>
+              </div>
+              <div class="section-sub mb-3">Materiales por debajo del mínimo</div>
+              <div id="alertasStock">
+                <div class="empty-state">✅ Sin alertas de stock</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ROW 3: Clases en curso -->
+      <div class="card card-dash">
+        <div class="card-body p-3">
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <div>
+              <div class="section-title">Clases en curso hoy</div>
+              <div id="panelCursosSub" class="section-sub">—</div>
+            </div>
+            <button id="btnRefrescarPanel" class="btn btn-outline-primary btn-sm">🔄 Actualizar</button>
+          </div>
+          <div id="panelCursos" class="schedule-wrap">
+            <div class="text-muted small">Cargando…</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /container -->
+  </main>
+</div>
+
+<script>
+function toggleSidebar() {
+  document.getElementById("sidebar").classList.toggle("open");
+  document.getElementById("overlay").classList.toggle("show");
+}
+</script>
+<script src="assets/vendor/bootstrap.bundle.min.js"></script>
+<script src="js/index.dashboard.js"></script>
+
+<script>
+// ─── Updater UI ─────────────────────────────────────────────────────────────
+(function() {
+  "use strict";
+
+  const banner      = document.getElementById("updateBanner");
+  const icon        = document.getElementById("updateIcon");
+  const msg         = document.getElementById("updateMsg");
+  const progressWrap = document.getElementById("updateProgress");
+  const progressBar  = document.getElementById("updateProgressBar");
+  const progressPct  = document.getElementById("updateProgressPct");
+  const installBtn  = document.getElementById("updateInstallBtn");
+  const checkBtn    = document.getElementById("updateCheckBtn");
+
+  // No hacemos nada si no estamos en Electron (dev sin preload)
+  if (!window.updater) {
+    console.info("[Updater UI] No disponible fuera de Electron.");
+    return;
+  }
+
+  function show(type, iconChar, message, opts = {}) {
+    banner.classList.remove("d-none", "success", "warning", "danger");
+    if (type) banner.classList.add(type);
+    icon.textContent = iconChar;
+    msg.textContent  = message;
+
+    // Barra de progreso
+    const showProg = !!opts.progress;
+    progressWrap.classList.toggle("d-none", !showProg);
+
+    // Botones
+    installBtn.classList.toggle("d-none", !opts.installBtn);
+    checkBtn.classList.toggle("d-none",   !opts.checkBtn);
+  }
+
+  function hide() {
+    banner.classList.add("d-none");
+  }
+
+  function setProgress(pct) {
+    progressBar.style.width = pct + "%";
+    progressPct.textContent = pct + "%";
+  }
+
+  // ─── Escuchar eventos del main process ─────────────────────────────────
+  window.updater.onStatus((data) => {
+    switch (data.event) {
+      case "checking":
+        show("", "🔄", "Buscando actualización…");
+        // Auto-ocultar si no hay novedad después de 8 segundos
+        clearTimeout(window._updaterHideTimer);
+        window._updaterHideTimer = setTimeout(hide, 8000);
+        break;
+
+      case "not-available":
+        // No molestar al usuario, ocultar silenciosamente
+        clearTimeout(window._updaterHideTimer);
+        hide();
+        break;
+
+      case "available":
+        clearTimeout(window._updaterHideTimer);
+        show("", "⬇️", `Nueva versión disponible: v${data.version || ""}. Descargando…`, { progress: true });
+        setProgress(0);
+        break;
+
+      case "progress": {
+        const pct = Math.round(data.percent || 0);
+        const kb  = data.bytesPerSecond ? ` · ${(data.bytesPerSecond / 1024).toFixed(0)} KB/s` : "";
+        show("", "⬇️", `Descargando actualización…${kb}`, { progress: true });
+        setProgress(pct);
+        break;
       }
-    });
-  </script>
 
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="js/index.dashboard.js"></script>
+      case "downloaded":
+        clearTimeout(window._updaterHideTimer);
+        show("success", "✅", `v${data.version || ""} lista. Reinicia para instalar.`, { installBtn: true });
+        break;
+
+      case "error":
+        clearTimeout(window._updaterHideTimer);
+        // Mostrar error brevemente y luego ocultar (no molestar)
+        show("danger", "⚠️", "No se pudo verificar actualización.", { checkBtn: true });
+        window._updaterHideTimer = setTimeout(hide, 12000);
+        console.warn("[Updater]", data.message);
+        break;
+    }
+  });
+
+  // ─── Funciones globales para los botones del banner ────────────────────
+  window.updaterInstall = function() {
+    if (window.updater) window.updater.quitAndInstall();
+  };
+  window.updaterCheck = function() {
+    if (window.updater) window.updater.checkNow();
+    show("", "🔄", "Buscando actualización…");
+  };
+  window.closeBanner = function() {
+    hide();
+  };
+
+})();
+</script>
 </body>
 </html>

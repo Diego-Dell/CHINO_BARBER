@@ -600,8 +600,8 @@
             <td class="fw-semibold">${esc(r.alumno_nombre || r.nombre || "")}</td>
             <td>${esc(r.alumno_documento || r.documento || "")}</td>
             <td>${esc(r.alumno_telefono || r.telefono || "")}</td>
-            <td>${esc(r.alumno_email ?? "")}</td>
-            <td>${badgeEstadoInscripcion(r.estado_inscripcion ?? r.estado ?? "")}</td>
+            <td>${esc(r.alumno_email || r.email || "—")}</td>
+            <td>${badgeEstadoInscripcion(r.inscripcion_estado ?? r.estado_inscripcion ?? r.estado ?? "")}</td>
           </tr>
         `
         )

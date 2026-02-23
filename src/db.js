@@ -1,4 +1,4 @@
-// src/db.js (estable / simple)
+// src/db.js (MEJORADO - con migraciones seguras)
 const sqlite3 = require("sqlite3").verbose();
 const fs = require("fs");
 const path = require("path");
@@ -27,7 +27,7 @@ db.serialize(() => {
 });
 
 
-// ==== MIGRACIONES (compatibilidad con DBs viejas) ====
+// ==== MIGRACIONES SEGURAS ====
 function dbAll(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows || [])));
@@ -36,8 +36,28 @@ function dbAll(sql, params = []) {
 
 function dbRun(sql, params = []) {
   return new Promise((resolve, reject) => {
-    db.run(sql, params, (err) => (err ? reject(err) : resolve()));
+    db.run(sql, params, function(err) {
+      err ? reject(err) : resolve(this);
+    });
   });
+}
+
+function dbExec(sql) {
+  return new Promise((resolve, reject) => {
+    db.exec(sql, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
+async function tableExists(tableName) {
+  try {
+    const result = await dbAll(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name=?;`,
+      [tableName]
+    );
+    return result.length > 0;
+  } catch (e) {
+    return false;
+  }
 }
 
 async function ensureColumn(table, colName, colType) {
@@ -51,12 +71,15 @@ async function ensureColumn(table, colName, colType) {
 
 async function runMigrations() {
   try {
+    console.log("[DB] Ejecutando migraciones...");
+
+    // ===== MIGRACIONES DE COMPATIBILIDAD =====
+    
     // cursos: estas columnas son las que te están fallando en queries nuevas
     await ensureColumn("cursos", "fecha_inicio", "TEXT");
     await ensureColumn("cursos", "fecha_fin", "TEXT");
 
     // pagos: compatibilidad (DBs viejas usaban "fecha")
-    // - si existe pagos.fecha pero no pagos.fecha_pago: crear fecha_pago y copiar
     try {
       const cols = await dbAll(`PRAGMA table_info(pagos);`);
       const names = new Set(cols.map(c => String(c.name || "").toLowerCase()));
@@ -70,13 +93,110 @@ async function runMigrations() {
     } catch (e) {
       console.warn("[DB] Migración pagos warn:", e.message);
     }
+
+    // ===== INVENTARIO: columnas nuevas =====
+    await ensureColumn("inventario_items", "precio_minimo", "REAL NOT NULL DEFAULT 0 CHECK(precio_minimo >= 0)");
+    await ensureColumn("inventario_movimientos", "precio_venta", "REAL");
+    await ensureColumn("inventario_movimientos", "precio_unitario", "REAL NOT NULL DEFAULT 0");
+
+    // ===== INVENTARIO: MIGRACIÓN SEGURA DEL TIPO DE MOVIMIENTO =====
+    // Detectar si la tabla inventario_movimientos_old existe (migración interrumpida)
+    const oldTableExists = await tableExists("inventario_movimientos_old");
+    const movimientosInfo = await dbAll(`PRAGMA table_info(inventario_movimientos);`);
+    const tipoCheckConstraint = movimientosInfo.find(col => col.name === 'tipo');
+    
+    if (oldTableExists) {
+      console.log("[DB] ⚠️  Migración incompleta detectada: inventario_movimientos_old existe");
+      console.log("[DB] Completando migración...");
+      
+      try {
+        // Copiar datos
+        const countOld = await dbAll(`SELECT COUNT(*) as cnt FROM inventario_movimientos_old;`);
+        console.log(`[DB] Migrando ${countOld[0]?.cnt || 0} registros...`);
+        
+        await dbRun(`
+          INSERT OR IGNORE INTO inventario_movimientos
+            (id, item_id, fecha, tipo, cantidad, costo_unitario, precio_unitario, precio_venta, motivo, curso_id, instructor_id, created_at, updated_at)
+          SELECT
+            id,
+            item_id,
+            COALESCE(fecha, date('now')),
+            tipo,
+            COALESCE(cantidad, 0),
+            COALESCE(costo_unitario, 0),
+            COALESCE(precio_unitario, 0),
+            precio_venta,
+            motivo,
+            curso_id,
+            instructor_id,
+            COALESCE(created_at, datetime('now')),
+            COALESCE(updated_at, datetime('now'))
+          FROM inventario_movimientos_old
+          WHERE NOT EXISTS (
+            SELECT 1 FROM inventario_movimientos m 
+            WHERE m.id = inventario_movimientos_old.id
+          );
+        `);
+        
+        // Limpiar tabla old
+        await dbRun(`DROP TABLE IF EXISTS inventario_movimientos_old;`);
+        console.log("[DB] ✅ Migración completada");
+      } catch (e) {
+        console.warn("[DB] Migración de OLD warn:", e.message);
+      }
+    }
+
+    // ===== INVENTARIO: TABLA DE PRÉSTAMOS =====
+    // Verificar si ya existe la tabla de préstamos
+    const prestamosExists = await tableExists("inventario_prestamos");
+    if (!prestamosExists) {
+      console.log("[DB] Creando tabla inventario_prestamos...");
+      await dbExec(`
+        CREATE TABLE IF NOT EXISTS inventario_prestamos (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          item_id INTEGER NOT NULL,
+          instructor_id INTEGER NOT NULL,
+          curso_id INTEGER,
+          fecha TEXT NOT NULL DEFAULT (date('now')),
+          cantidad INTEGER NOT NULL CHECK(cantidad > 0),
+          nota TEXT,
+          estado TEXT NOT NULL DEFAULT 'Pendiente' CHECK(estado IN ('Pendiente','Devuelto')),
+          cantidad_devuelta INTEGER NOT NULL DEFAULT 0 CHECK(cantidad_devuelta >= 0),
+          fecha_devolucion TEXT,
+          mov_salida_id INTEGER,
+          mov_devolucion_id INTEGER,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (item_id) REFERENCES inventario_items(id) ON UPDATE CASCADE ON DELETE CASCADE,
+          FOREIGN KEY (instructor_id) REFERENCES instructores(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+          FOREIGN KEY (curso_id) REFERENCES cursos(id) ON UPDATE CASCADE ON DELETE SET NULL,
+          FOREIGN KEY (mov_salida_id) REFERENCES inventario_movimientos(id) ON UPDATE CASCADE ON DELETE SET NULL,
+          FOREIGN KEY (mov_devolucion_id) REFERENCES inventario_movimientos(id) ON UPDATE CASCADE ON DELETE SET NULL
+        );
+      `);
+      
+      // Crear índices
+      await dbRun(`CREATE INDEX IF NOT EXISTS ix_prest_item ON inventario_prestamos(item_id);`);
+      await dbRun(`CREATE INDEX IF NOT EXISTS ix_prest_estado ON inventario_prestamos(estado);`);
+      await dbRun(`CREATE INDEX IF NOT EXISTS ix_prest_instructor ON inventario_prestamos(instructor_id);`);
+      await dbRun(`CREATE INDEX IF NOT EXISTS ix_prest_fecha ON inventario_prestamos(fecha);`);
+      
+      console.log("[DB] ✅ Tabla de préstamos creada");
+    } else {
+      console.log("[DB] Tabla de préstamos ya existe");
+    }
+
+    console.log("[DB] ✅ Migraciones completadas");
   } catch (e) {
-    console.warn("[DB] Migraciones warn:", e.message);
+    console.error("[DB] ❌ Error en migraciones:", e.message);
+    console.error(e.stack);
   }
 }
 
-// Ejecutar migraciones
-runMigrations();
+// Ejecutar migraciones al iniciar
+runMigrations().catch(err => {
+  console.error("[DB] Error crítico en migraciones:", err.message);
+});
 
 
 // schema.sql: el del proyecto
