@@ -233,7 +233,7 @@ router.get("/", async (req, res) => {
       if (hasCol(cols, "horario_por_dia")) {
         const p = parseHorarioPorDia(c.horario_por_dia);
         extra = {
-          fecha_inicio: p.fecha_inicio || "",
+          fecha_inicio: p.fecha_inicio || escStr(c.fecha_inicio || ""), // fallback a columna fecha_inicio
           hora_inicio: p.hora_inicio || "",
           duracion: p.duracion ? toNum(p.duracion, 0) : 0,
         };
@@ -305,7 +305,7 @@ router.get("/:id", async (req, res) => {
     if (hasCol(cols, "horario_por_dia")) {
       const p = parseHorarioPorDia(c.horario_por_dia);
       extra = {
-        fecha_inicio: p.fecha_inicio || "",
+        fecha_inicio: p.fecha_inicio || escStr(c.fecha_inicio || ""), // fallback a columna fecha_inicio
         hora_inicio: p.hora_inicio || "",
         duracion: p.duracion ? toNum(p.duracion, 0) : 0,
       };

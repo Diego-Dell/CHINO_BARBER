@@ -38,10 +38,19 @@ function dbAll(sql, params = []) {
    Middlewares reutilizables
 ===================================== */
 function authRequired(req, res, next) {
+  if (!req.session || !req.session.user) {
+    return res.status(401).json({ ok: false, error: "No autorizado" });
+  }
   return next();
 }
 
 function adminOnly(req, res, next) {
+  if (!req.session || !req.session.user) {
+    return res.status(401).json({ ok: false, error: "No autorizado" });
+  }
+  if (req.session.user.rol !== "Admin") {
+    return res.status(403).json({ ok: false, error: "Se requiere rol Admin" });
+  }
   return next();
 }
 
@@ -179,7 +188,7 @@ router.get("/auth/me", (req, res) => {
   if (!req.session || !req.session.user) {
     return res.status(401).json({ ok: false, error: "No autorizado" });
   }
-  return res.json({ ok: true, data: req.session.user });
+  return res.json({ ok: true, data: req.session.user, user: req.session.user });
 });
 
 // 4) POST /auth/change-password

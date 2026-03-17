@@ -23,7 +23,7 @@
     const data = await res.json();
 
     // Respuesta inválida o sin usuario → login
-    if (!data || !data.user) {
+    if (!data || (!data.user && !data.data)) {
       window.location.replace("/login.html");
       return;
     }

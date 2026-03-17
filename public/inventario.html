@@ -29,6 +29,7 @@
     .stock-ok{color:#198754;font-weight:600}
     .stock-zero{color:#6c757d}
   </style>
+
 </head>
 <body class="bg-light">
 <div class="d-flex">
@@ -174,6 +175,9 @@
             </li>
             <li class="nav-item">
               <button class="nav-link btn-round px-4" data-bs-toggle="pill" data-bs-target="#tabResumen">📊 Resumen</button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link btn-round px-4" id="btnTabPrestamos" data-bs-toggle="pill" data-bs-target="#tabPrestamos">🤝 Préstamos</button>
             </li>
           </ul>
 
@@ -378,6 +382,56 @@
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+
+
+            <!-- TAB PRÉSTAMOS -->
+            <div class="tab-pane fade" id="tabPrestamos">
+              <!-- Filtros -->
+              <div class="row g-2 align-items-end mb-3">
+                <div class="col-md-3">
+                  <label class="form-label small text-muted mb-1">Estado</label>
+                  <select id="pFiltroEstado" class="form-select form-select-sm">
+                    <option value="">Todos</option>
+                    <option value="Pendiente" selected>Pendientes</option>
+                    <option value="Devuelto">Devueltos</option>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small text-muted mb-1">Profesor</label>
+                  <select id="pFiltroInstructor" class="form-select form-select-sm">
+                    <option value="">Todos los profesores</option>
+                  </select>
+                </div>
+                <div class="col-md-6 d-flex gap-2 justify-content-md-end align-items-end">
+                  <button class="btn btn-outline-secondary btn-sm btn-round" id="btnFiltrarPrestamos">🔎 Filtrar</button>
+                  <button class="btn btn-outline-secondary btn-sm btn-round" id="btnLimpiarPrestamos">🧹 Todos</button>
+                  <small id="pResumen" class="text-muted ms-2">—</small>
+                </div>
+              </div>
+
+              <!-- Tabla -->
+              <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                  <thead class="table-light">
+                    <tr>
+                      <th>#</th>
+                      <th>Material</th>
+                      <th>Profesor</th>
+                      <th>Curso</th>
+                      <th class="text-center">Fecha</th>
+                      <th class="text-center">Cantidad</th>
+                      <th class="text-center">Pendiente</th>
+                      <th>Nota</th>
+                      <th class="text-center">Estado</th>
+                      <th class="text-end">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tblPrestamosTab">
+                    <tr><td colspan="10" class="text-muted text-center py-4">Cargando…</td></tr>
+                  </tbody>
+                </table>
               </div>
             </div>
 

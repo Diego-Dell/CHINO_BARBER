@@ -234,12 +234,12 @@
       return;
     }
 
-    const items = [];
-    for (const c of cursosEnCurso) {
+    // Cargar todos los inscriptos en paralelo (evita N+1 requests)
+    const items = await Promise.all(cursosEnCurso.map(async (c) => {
       const resp = await fetchJSON(`/api/inscripciones/por-curso/${encodeURIComponent(c.id)}`).catch(() => null);
       const rows = Array.isArray(resp) ? resp : (Array.isArray(resp?.data) ? resp.data : []);
-      items.push({ id: c.id, nombre: c.nombre, horario: c.horario_por_dia || c.horario || "—", dias: c.dias || "", instructor: c.instructor_nombre || "", alumnos: rows });
-    }
+      return { id: c.id, nombre: c.nombre, horario: c.horario_por_dia || c.horario || "—", dias: c.dias || "", instructor: c.instructor_nombre || "", alumnos: rows };
+    }));
 
     wrap.innerHTML = items.map(c => {
       const first = c.alumnos.slice(0, 12);

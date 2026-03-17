@@ -1,12 +1,7 @@
 // src/routes/routes.js
-// Router central de la API. Se monta en el server como: app.use("/api", router)
-
 const express = require("express");
 const router = express.Router();
 
-// ===============================
-// Middleware base API
-// ===============================
 const { validateJsonBody } = require("../middleware/validator");
 
 router.use((req, res, next) => {
@@ -16,46 +11,26 @@ router.use((req, res, next) => {
 
 router.use(validateJsonBody);
 
-// ===============================
-// Diagnóstico
-// ===============================
 router.get("/health", (req, res) => {
-  return res.json({
-    ok: true,
-    service: "api",
-    time: new Date().toISOString(),
-  });
+  return res.json({ ok: true, service: "api", time: new Date().toISOString() });
 });
 
 router.get("/whoami", (req, res) =>
   res.json({ ok: true, data: { user: null } })
 );
 
-// ===============================
-// Montaje de módulos
-// ===============================
 function loadModule(file, envFlag) {
-  if (envFlag && String(process.env[envFlag] || "").toLowerCase() === "true") {
-    console.warn(`[API] Module disabled by env: ${file} (${envFlag}=true)`);
-    return null;
-  }
-
+  if (envFlag && String(process.env[envFlag] || "").toLowerCase() === "true") return null;
   try {
     return require(file);
   } catch (err) {
-    const allowMissing =
-      String(process.env.ALLOW_MISSING_MODULES || "").toLowerCase() === "true";
+    const allowMissing = String(process.env.ALLOW_MISSING_MODULES || "").toLowerCase() === "true";
     const msg = `[API] Failed to load module: ${file} -> ${err.message}`;
-    if (allowMissing) {
-      console.error(msg);
-      return null;
-    }
+    if (allowMissing) { console.error(msg); return null; }
     throw new Error(msg);
   }
 }
 
-// ❌ SIN LOGIN: no auth.routes.js
-// ✅ módulos CRUD
 const alumnosRouter = loadModule("./alumnos.routes.js", "DISABLE_MODULE_ALUMNOS");
 if (alumnosRouter) router.use("/alumnos", alumnosRouter);
 
@@ -89,9 +64,6 @@ if (reportesRouter) router.use("/reportes", reportesRouter);
 const settingsRouter = loadModule("./settings.routes.js", "DISABLE_MODULE_SETTINGS");
 if (settingsRouter) router.use("/settings", settingsRouter);
 
-// ===============================
-// 404 API
-// ===============================
 router.use((req, res) => {
   return res.status(404).json({ ok: false, error: "API route not found" });
 });

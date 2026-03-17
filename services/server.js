@@ -62,7 +62,72 @@ function dbExec(dbConn, sql) {
 
 async function ensureInventarioMigration(dbConn) {
   try {
-    // 1) Ver definición SQL de inventario_movimientos para confirmar CHECK expandido
+    // ── PASO 0: Limpiar triggers huérfanos que apunten a inventario_movimientos_old ──
+    // Esto ocurre cuando SQLite hace RENAME TABLE con FK activos y la migración
+    // fue interrumpida. Los triggers quedan apuntando a la tabla vieja ya inexistente.
+    try {
+      const orphanTriggers = await dbAll(
+        dbConn,
+        `SELECT name FROM sqlite_master WHERE type='trigger'
+         AND (sql LIKE '%inventario_movimientos_old%' OR tbl_name='inventario_movimientos_old')`
+      );
+      for (const t of orphanTriggers) {
+        await new Promise((res, rej) =>
+          dbConn.run(`DROP TRIGGER IF EXISTS "${t.name}"`, (err) => err ? rej(err) : res())
+        );
+        console.log("[MIGRATION] Trigger huérfano eliminado:", t.name);
+      }
+    } catch (e) {
+      console.warn("[MIGRATION] No se pudieron limpiar triggers huérfanos:", e.message);
+    }
+
+    // ── PASO 1: Recuperar migración interrumpida ──
+    // Si inventario_movimientos_old existe, la migración anterior fue interrumpida.
+    // Completamos manualmente: copiar datos y eliminar la tabla vieja.
+    const oldExists = await dbGet(
+      dbConn,
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='inventario_movimientos_old'"
+    );
+    if (oldExists) {
+      console.log("[MIGRATION] ⚠️  Detectada migración interrumpida (inventario_movimientos_old existe). Completando...");
+      const newExists = await dbGet(
+        dbConn,
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='inventario_movimientos'"
+      );
+      if (newExists) {
+        // La nueva tabla ya existe: copiar los datos que falten y eliminar la vieja
+        try {
+          await new Promise((res, rej) => dbConn.run(`
+            INSERT OR IGNORE INTO inventario_movimientos
+              (id, item_id, fecha, tipo, cantidad, costo_unitario, motivo, curso_id, instructor_id, created_at, updated_at)
+            SELECT
+              id, item_id,
+              COALESCE(fecha, date('now')),
+              tipo,
+              COALESCE(cantidad, 0),
+              COALESCE(costo_unitario, 0),
+              motivo, curso_id, instructor_id,
+              COALESCE(created_at, datetime('now')),
+              COALESCE(updated_at, datetime('now'))
+            FROM inventario_movimientos_old
+            WHERE NOT EXISTS (SELECT 1 FROM inventario_movimientos m WHERE m.id = inventario_movimientos_old.id)
+          `, (err) => err ? rej(err) : res()));
+        } catch (e) {
+          console.warn("[MIGRATION] Advertencia copiando datos desde _old:", e.message);
+        }
+      }
+      // Eliminar la tabla vieja pase lo que pase
+      try {
+        await new Promise((res, rej) =>
+          dbConn.run("DROP TABLE IF EXISTS inventario_movimientos_old", (err) => err ? rej(err) : res())
+        );
+        console.log("[MIGRATION] ✅ inventario_movimientos_old eliminada");
+      } catch (e) {
+        console.warn("[MIGRATION] No se pudo eliminar inventario_movimientos_old:", e.message);
+      }
+    }
+
+    // ── PASO 2: Verificar si la migración principal ya fue aplicada ──
     const movDef = await dbGet(
       dbConn,
       "SELECT sql FROM sqlite_master WHERE type='table' AND name='inventario_movimientos'"
@@ -70,7 +135,6 @@ async function ensureInventarioMigration(dbConn) {
     const movSql = String(movDef?.sql || "");
     const movOk = movSql.includes("Prestamo") && movSql.includes("Devolucion") && movSql.includes("Venta");
 
-    // 2) Ver si inventario_prestamos existe y tiene columna nota
     const prestDef = await dbGet(
       dbConn,
       "SELECT name FROM sqlite_master WHERE type='table' AND name='inventario_prestamos'"
@@ -81,16 +145,21 @@ async function ensureInventarioMigration(dbConn) {
       prestOk = cols.some(c => c && c.name === "nota");
     }
 
-    if (movOk && prestOk) return;
+    if (movOk && prestOk) {
+      console.log("[MIGRATION] Inventario ya está actualizado, nada que hacer.");
+      return;
+    }
 
-    // 3) Ejecutar migración SQL
+    // ── PASO 3: Ejecutar el archivo SQL de migración ──
     const sqlPath = path.join(__dirname, "migrations", "2026_02_inventario_prestamo_venta.sql");
+    if (!existsFile(sqlPath)) {
+      console.warn("[MIGRATION] Archivo SQL no encontrado:", sqlPath);
+      return;
+    }
     const sql = fs.readFileSync(sqlPath, "utf8");
 
-    console.log("[MIGRATION] Running inventario migration...");
+    console.log("[MIGRATION] Ejecutando migración de inventario...");
 
-    // Si inventario_prestamos NO existe, evitamos que el SQL falle por ALTER RENAME:
-    // Ejecutamos una pre-creación mínima antes (si no existe)
     if (!prestDef) {
       await dbExec(dbConn, `
         CREATE TABLE IF NOT EXISTS inventario_prestamos (
@@ -113,9 +182,9 @@ async function ensureInventarioMigration(dbConn) {
     }
 
     await dbExec(dbConn, sql);
-    console.log("[MIGRATION] Inventario migration OK");
+    console.log("[MIGRATION] ✅ Migración de inventario completada");
   } catch (e) {
-    console.error("[MIGRATION] Failed:", e);
+    console.error("[MIGRATION] Error:", e.message || e);
   }
 }
 
@@ -149,6 +218,8 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+
+
 // Frontend estático
 // ⚠️ OJO: en packaged, PUBLIC_DIR puede estar dentro del asar (solo lectura).
 // No intentamos crear PUBLIC_DIR si es read-only (igual express.static lee).
@@ -180,6 +251,41 @@ app.get("/api/health", async (req, res) => {
   } catch (_) {}
   return res.json({ ok: true, db: dbOk, uptime: process.uptime() });
 });
+
+
+// ── Licencia ─────────────────────────────────────────────────────────────────
+let licMod = null;
+try { licMod = require("../src/security/license"); } catch (_) {}
+
+app.get("/api/license/status", (req, res) => {
+  const activated = licMod ? licMod.isActivated() : true;
+  res.json({ ok: true, activated });
+});
+
+app.get("/api/license/machine-code", (req, res) => {
+  const code = licMod ? licMod.getMachineCode() : "N/A";
+  res.json({ ok: true, code });
+});
+
+app.post("/api/license/activate", (req, res) => {
+  if (!licMod) return res.json({ ok: true }); // sin módulo = skip
+  const key = String(req.body && req.body.key || "").trim();
+  const result = licMod.activate(key);
+  res.json(result);
+});
+
+// ── Guard: redirigir a activation.html si no está activado ───────────────────
+app.use((req, res, next) => {
+  if (!licMod) return next();
+  if (req.path.startsWith("/api/")) return next();
+  if (req.path === "/activation.html" || req.path === "/") return next();
+  if ([".js",".css",".png",".ico",".woff",".woff2",".svg"].some(ext => req.path.endsWith(ext))) return next();
+  if (!licMod.isActivated()) {
+    return res.redirect("/activation.html");
+  }
+  next();
+});
+
 
 // Montar router central
 (function mountRoutes() {
@@ -220,6 +326,38 @@ app.use((err, req, res, next) => {
   if (isApi) return res.status(500).json({ ok: false, error: prod ? "Internal server error" : msg });
   return res.status(500).send(prod ? "Internal server error" : msg);
 });
+
+
+// ── Asegurar que backup va a AppData (no al directorio del proyecto) ─────────
+if (process.env.APP_USER_DATA && !process.env.BACKUP_DIR) {
+  const _bdir = require("path").join(process.env.APP_USER_DATA, "backups");
+  require("fs").mkdirSync(_bdir, { recursive: true });
+  process.env.BACKUP_DIR = _bdir;
+}
+
+// ── Auto-backup silencioso cada 6 horas ──────────────────────────────────────
+(function startAutoBackup() {
+  try {
+    const backup = require("./backup");
+    const INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 horas
+    const MAX_BACKUPS = 10;
+
+    async function doBackup() {
+      try {
+        const r = await backup.createBackup();
+        if (r.ok) {
+          // Rotar: mantener solo los últimos MAX_BACKUPS
+          await backup.purgeOldBackups({ keepLast: MAX_BACKUPS, olderThanDays: 0 });
+        }
+      } catch (_) {}
+    }
+
+    // Primer backup a los 5 minutos de iniciar
+    setTimeout(doBackup, 5 * 60 * 1000);
+    // Luego cada 6 horas
+    setInterval(doBackup, INTERVAL_MS);
+  } catch (_) {}
+})();
 
 // Start
 const requestedPort = Number(process.env.PORT ?? config.PORT ?? 0) || 0;

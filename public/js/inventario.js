@@ -116,6 +116,10 @@
 
   const tblPrestamosPend = document.getElementById("tblPrestamosPend");
   const msgPrestamosPend = document.getElementById("msgPrestamosPend");
+  const tblPrestamosTab = document.getElementById("tblPrestamosTab");
+  const pResumen = document.getElementById("pResumen");
+  const pFiltroEstado = document.getElementById("pFiltroEstado");
+  const pFiltroInstructor = document.getElementById("pFiltroInstructor");
 
   // ===== Cache =====
   let itemsCache = [];
@@ -381,6 +385,80 @@
     } catch (err) {
       console.error("Error cargando préstamos:", err);
       if (tblPrestamosPend) tblPrestamosPend.innerHTML = `<tr><td colspan="6" class="text-danger">Error cargando préstamos.</td></tr>`;
+    }
+  }
+
+  async function cargarTabPrestamos() {
+    if (!tblPrestamosTab) return;
+    tblPrestamosTab.innerHTML = `<tr><td colspan="10" class="text-muted text-center py-4">Cargando…</td></tr>`;
+    try {
+      const estado = pFiltroEstado ? pFiltroEstado.value : "";
+      const rows = await apiListPrestamos(estado ? { estado } : {});
+
+      // Populate instructor filter
+      if (pFiltroInstructor && pFiltroInstructor.options.length <= 1) {
+        const instructores = [...new Map(rows.map(r => [r.instructor_id, r.instructor_nombre])).entries()];
+        instructores.forEach(([id, nombre]) => {
+          if (!id) return;
+          const opt = document.createElement("option");
+          opt.value = id;
+          opt.textContent = nombre || "—";
+          pFiltroInstructor.appendChild(opt);
+        });
+      }
+
+      // Filter by instructor if selected
+      const instrId = pFiltroInstructor ? pFiltroInstructor.value : "";
+      const filtered = instrId ? rows.filter(r => String(r.instructor_id) === instrId) : rows;
+
+      if (pResumen) pResumen.textContent = `${filtered.length} préstamo${filtered.length === 1 ? "" : "s"}`;
+
+      if (!filtered.length) {
+        tblPrestamosTab.innerHTML = `<tr><td colspan="10" class="text-muted text-center py-4">Sin préstamos para los filtros seleccionados.</td></tr>`;
+        return;
+      }
+
+      tblPrestamosTab.innerHTML = filtered.map(p => {
+        const total = Number(p.cantidad || 0);
+        const devuelto = Number(p.cantidad_devuelta || 0);
+        const pendiente = total - devuelto;
+        const esDevuelto = p.estado === "Devuelto";
+        const estadoBadge = esDevuelto
+          ? `<span class="badge bg-success">Devuelto</span>`
+          : `<span class="badge bg-warning text-dark">Pendiente</span>`;
+        const accion = esDevuelto
+          ? `<span class="text-muted small">—</span>`
+          : `<button class="btn btn-sm btn-outline-success btn-round" data-act="devolver-tab" data-id="${esc(p.id)}" data-pend="${pendiente}">↩️ Devolver</button>`;
+        return `
+          <tr>
+            <td class="text-muted">#${esc(p.id)}</td>
+            <td class="fw-semibold">${esc(p.item_producto || "")}</td>
+            <td>${esc(p.instructor_nombre || "—")}</td>
+            <td class="text-muted small">${esc(p.curso_nombre || "—")}</td>
+            <td class="text-center text-muted small">${esc(p.fecha || "")}</td>
+            <td class="text-center">${total}</td>
+            <td class="text-center">${pendiente > 0 ? `<span class="badge bg-warning text-dark">${pendiente}</span>` : `<span class="text-muted">0</span>`}</td>
+            <td class="text-muted small">${esc(p.nota || "—")}</td>
+            <td class="text-center">${estadoBadge}</td>
+            <td class="text-end">${accion}</td>
+          </tr>`;
+      }).join("");
+
+      // Bind devolver buttons
+      tblPrestamosTab.querySelectorAll('[data-act="devolver-tab"]').forEach(btn => {
+        btn.addEventListener("click", () => {
+          if (dPrestamo) dPrestamo.value = btn.dataset.id;
+          const opt = dPrestamo?.options[dPrestamo.selectedIndex];
+          const pend = Number(btn.dataset.pend || opt?.getAttribute("data-pendiente") || 0);
+          if (dCant) dCant.value = pend ? String(pend) : "1";
+          if (dFecha && !dFecha.value) dFecha.value = todayISO();
+          bootstrap.Modal.getOrCreateInstance(document.getElementById("modalDevolucion")).show();
+        });
+      });
+
+    } catch (err) {
+      console.error("Error cargando tab préstamos:", err);
+      if (tblPrestamosTab) tblPrestamosTab.innerHTML = `<tr><td colspan="10" class="text-danger text-center py-3">Error cargando préstamos.</td></tr>`;
     }
   }
 
@@ -696,6 +774,13 @@
     if (rHasta) rHasta.value = "";
     await cargarResumenRango();
   });
+  document.getElementById("btnFiltrarPrestamos")?.addEventListener("click", cargarTabPrestamos);
+  document.getElementById("btnLimpiarPrestamos")?.addEventListener("click", () => {
+    if (pFiltroEstado) pFiltroEstado.value = "Pendiente";
+    if (pFiltroInstructor) pFiltroInstructor.value = "";
+    cargarTabPrestamos();
+  });
+  document.getElementById("btnTabPrestamos")?.addEventListener("click", cargarTabPrestamos);
 
   // Búsqueda con Enter
   qItem?.addEventListener("keydown", (e) => { if (e.key === "Enter") cargarItems(); });
