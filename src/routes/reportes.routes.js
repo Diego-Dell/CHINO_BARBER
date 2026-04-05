@@ -491,11 +491,13 @@ router.get("/deudores", async (req, res) => {
       INNER JOIN alumnos a ON i.alumno_id = a.id
       INNER JOIN cursos c ON i.curso_id = c.id
       LEFT JOIN pagos p ON i.id = p.inscripcion_id
-        AND substr(p.fecha_pago, 1, 7) = ?
       WHERE i.estado = 'Activa'
     `;
+    /* NOTA: el JOIN con pagos ya NO filtra por mes. Se suman TODOS los pagos históricos
+       para calcular el saldo real del alumno (precio - total_pagado_acumulado). Antes el
+       filtro por mes ignoraba cuotas previas y mostraba una deuda inflada. */
 
-    const params = [targetMonth, targetMonth];
+    const params = [targetMonth];
 
     if (q && q.trim()) {
       const searchTerm = `%${q.trim()}%`;

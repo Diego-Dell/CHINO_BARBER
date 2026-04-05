@@ -165,19 +165,22 @@ router.post("/", async (req, res) => {
       return res.status(404).json({ ok: false, error: "Inscripción no existe" });
     }
 
-    // Validación: no permitir duplicado para misma inscripción + mismo mes
+    // Validación: no permitir duplicado para misma inscripción + mismo mes + mismas observaciones
+    // Se incluye observaciones en el chequeo para permitir múltiples cuotas en el mismo mes
+    // (p.ej. "Cuota 1 - Curso X" y "Cuota 2 - Curso X" son pagos distintos aunque caigan en el mismo mes)
     const mes = fecha.slice(0, 7); // YYYY-MM
     const dupCheck = await dbGet(
       `SELECT id FROM pagos 
        WHERE inscripcion_id = ? 
          AND substr(fecha_pago, 1, 7) = ? 
-         AND estado = 'Pagado'`,
-      [inscripcion_id, mes]
+         AND estado = 'Pagado'
+         AND (? = '' OR observaciones = ?)`,
+      [inscripcion_id, mes, observaciones, observaciones]
     );
     if (dupCheck) {
       return res.status(409).json({
         ok: false,
-        error: `Ya existe un pago registrado para esta inscripción en el mes ${mes}. No se permiten duplicados.`,
+        error: `Ya existe un pago con las mismas observaciones para esta inscripción en el mes ${mes}. No se permiten duplicados.`,
       });
     }
 

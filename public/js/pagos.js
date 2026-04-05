@@ -686,9 +686,13 @@ async function refreshPagosPorCuota() {
       });
     }
 
-    const pagado = cuotaSeleccionada != null ? cuotasModelo[cuotaSeleccionada].monto : 0;
-    if (pgTotalPagado) pgTotalPagado.textContent = bs(pagado);
-    if (pgSaldo) pgSaldo.textContent = bs(Math.max(0, total - pagado));
+    // Mostrar totales REALES (suma de todas las cuotas efectivamente pagadas),
+    // no solo el monto de la cuota seleccionada que sobreescribía los valores correctos.
+    const actualPagado = Array.from(pagosPorCuota.values())
+      .filter((p) => String(p.estado || "").toLowerCase() === "pagado")
+      .reduce((acc, p) => acc + Number(p.monto || 0), 0);
+    if (pgTotalPagado) pgTotalPagado.textContent = bs(actualPagado);
+    if (pgSaldo) pgSaldo.textContent = bs(Math.max(0, total - actualPagado));
   }
 
   // ================= TABLA PAGOS =================
