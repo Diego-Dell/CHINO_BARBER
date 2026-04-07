@@ -698,14 +698,14 @@ async function refreshPagosPorCuota() {
   // ================= TABLA PAGOS =================
   function setTablaLoading() {
     if (!tablaPagosBody) return;
-    tablaPagosBody.innerHTML = `<tr><td colspan="10" class="text-center text-muted">Cargando pagos...</td></tr>`;
+    tablaPagosBody.innerHTML = `<tr><td colspan="11" class="text-center text-muted">Cargando pagos...</td></tr>`;
   }
 
   function renderPagosTable(rows) {
     if (!tablaPagosBody) return;
 
     if (!rows.length) {
-      tablaPagosBody.innerHTML = `<tr><td colspan="10" class="text-center text-muted">No hay pagos.</td></tr>`;
+      tablaPagosBody.innerHTML = `<tr><td colspan="11" class="text-center text-muted">No hay pagos.</td></tr>`;
       if (pResumen) pResumen.textContent = "0 pagos";
       return;
     }
@@ -728,9 +728,14 @@ async function refreshPagosPorCuota() {
             <td>${esc(r.metodo || "—")}</td>
             <td class="text-muted small">${esc(r.observaciones || "—")}</td>
             <td class="text-end">
-              <button type="button" class="btn btn-sm btn-outline-danger" data-del-id="${esc(r.id)}">
-                Eliminar
-              </button>
+              <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-primary" data-print-id="${esc(r.id)}" title="Imprimir recibo">
+                  🖨️
+                </button>
+                <button type="button" class="btn btn-outline-danger" data-del-id="${esc(r.id)}" title="Eliminar">
+                  🗑️
+                </button>
+              </div>
             </td>
           </tr>
         `;
@@ -758,6 +763,17 @@ async function refreshPagosPorCuota() {
       });
     });
 
+    // ✅ listeners de impresión (DESPUÉS del innerHTML)
+    tablaPagosBody.querySelectorAll("button[data-print-id]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-print-id");
+        const pago = rows.find(r => String(r.id) === String(id));
+        if (pago) {
+          imprimirRecibo(pago);
+        }
+      });
+    });
+
     if (pResumen) pResumen.textContent = `${rows.length} pago${rows.length !== 1 ? "s" : ""}`;
   }
 
@@ -779,12 +795,154 @@ async function refreshPagosPorCuota() {
     } catch (e) {
       console.error(e);
       if (tablaPagosBody) {
-        tablaPagosBody.innerHTML = `<tr><td colspan="10" class="text-center text-danger">Error: ${esc(
+        tablaPagosBody.innerHTML = `<tr><td colspan="11" class="text-center text-danger">Error: ${esc(
           e.message || e
         )}</td></tr>`;
       }
       if (pResumen) pResumen.textContent = "0 pagos";
     }
+  }
+
+  // ================= IMPRESIÓN DE RECIBOS =================
+  function imprimirRecibo(pago) {
+    // Verificar que jsPDF esté disponible
+    if (typeof window.jspdf === 'undefined' || !window.jspdf.jsPDF) {
+      alert('Error: La librería PDF no está disponible. Por favor contacta al administrador.');
+      return;
+    }
+
+    const { jsPDF } = window.jspdf;
+    
+    // Media carta: 5.5 x 8.5 pulgadas = 139.7 x 215.9 mm
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: [139.7, 215.9]
+    });
+
+    const pageWidth = 139.7;
+    const margin = 10;
+    const contentWidth = pageWidth - (margin * 2);
+    let y = 15;
+
+    // ─── ENCABEZADO ───
+    doc.setFillColor(13, 110, 253);
+    doc.rect(0, 0, pageWidth, 35, 'F');
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(20);
+    doc.setFont('helvetica', 'bold');
+    doc.text('RECIBO DE PAGO', pageWidth / 2, 15, { align: 'center' });
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Barber School', pageWidth / 2, 22, { align: 'center' });
+    doc.text('Develop by Diego Dell', pageWidth / 2, 28, { align: 'center' });
+
+    y = 45;
+
+    // ─── NÚMERO DE RECIBO ───
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Recibo N° ${pago.id || '---'}`, margin, y);
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    const fecha = (pago.fecha || '').slice(0, 10) || '---';
+    doc.text(`Fecha: ${fecha}`, pageWidth - margin, y, { align: 'right' });
+
+    y += 10;
+
+    // ─── LÍNEA SEPARADORA ───
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 8;
+
+    // ─── DATOS DEL ALUMNO ───
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('DATOS DEL ALUMNO', margin, y);
+    y += 6;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    
+    const alumnoNombre = pago.alumno_nombre || 'No especificado';
+    const alumnoDoc = pago.alumno_documento || 'No especificado';
+    
+    doc.text(`Nombre: ${alumnoNombre}`, margin, y);
+    y += 5;
+    doc.text(`CI: ${alumnoDoc}`, margin, y);
+    y += 5;
+    doc.text(`Curso: ${pago.curso_nombre || 'No especificado'}`, margin, y);
+    y += 10;
+
+    // ─── LÍNEA SEPARADORA ───
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 8;
+
+    // ─── DETALLE DEL PAGO ───
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text('DETALLE DEL PAGO', margin, y);
+    y += 6;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    
+    const monto = Number(pago.monto || 0).toFixed(2);
+    const metodo = pago.metodo || 'No especificado';
+    const estado = pago.estado || 'Pendiente';
+    const obs = pago.observaciones || 'Sin observaciones';
+
+    doc.text(`Concepto: ${obs}`, margin, y);
+    y += 5;
+    doc.text(`Método de pago: ${metodo}`, margin, y);
+    y += 5;
+    doc.text(`Estado: ${estado}`, margin, y);
+    y += 10;
+
+    // ─── MONTO DESTACADO ───
+    doc.setFillColor(240, 248, 255);
+    doc.rect(margin, y, contentWidth, 15, 'F');
+    
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.setTextColor(13, 110, 253);
+    doc.text('MONTO PAGADO', margin + 3, y + 6);
+    doc.text(`Bs ${monto}`, pageWidth - margin - 3, y + 6, { align: 'right' });
+    
+    y += 20;
+
+    // ─── LÍNEA SEPARADORA ───
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 10;
+
+    // ─── PIE DE PÁGINA ───
+    doc.setTextColor(100, 100, 100);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'italic');
+    
+    const fechaEmision = new Date().toLocaleDateString('es-ES');
+    doc.text(`Recibo emitido el ${fechaEmision}`, pageWidth / 2, y, { align: 'center' });
+    y += 5;
+    doc.text('Este documento es válido como comprobante de pago', pageWidth / 2, y, { align: 'center' });
+    
+    y += 15;
+
+    // ─── FIRMA ───
+    doc.setDrawColor(0, 0, 0);
+    doc.line(margin + 20, y, pageWidth - margin - 20, y);
+    y += 5;
+    doc.setTextColor(0, 0, 0);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Firma y sello', pageWidth / 2, y, { align: 'center' });
+
+    // ─── ABRIR PDF ───
+    const fileName = `Recibo_${pago.id || 'xxx'}_${fecha.replace(/-/g, '')}.pdf`;
+    doc.save(fileName);
   }
 
   // ================= EVENTOS (FILTROS) =================

@@ -269,6 +269,12 @@ html, body { max-width:100%; overflow-x:hidden; }
 
   <!-- MAIN -->
   <main class="main-content flex-grow-1">
+    
+    <!-- VERSIÓN EN ESQUINA SUPERIOR DERECHA -->
+    <div id="appVersion" style="position: fixed; top: 12px; right: 16px; background: rgba(255,255,255,0.95); border: 1px solid rgba(13,110,253,0.2); border-radius: 8px; padding: 6px 12px; font-size: 11px; font-weight: 600; color: #0d6efd; box-shadow: 0 2px 8px rgba(0,0,0,0.08); z-index: 1050; backdrop-filter: blur(8px);">
+      v<span id="versionNumber">...</span>
+    </div>
+
     <div class="container-fluid py-4">
 
       <!-- ─── Banner de actualización ─────────────────────────── -->
@@ -449,11 +455,60 @@ html, body { max-width:100%; overflow-x:hidden; }
   </main>
 </div>
 
+<!-- MODAL DE ACTUALIZACIÓN PROFESIONAL -->
+<div class="modal fade" id="updateModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius: 16px; overflow: hidden; border: none; box-shadow: 0 10px 40px rgba(0,0,0,0.15);">
+      <div class="modal-header border-0" style="background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%); padding: 24px;">
+        <div class="w-100 text-center">
+          <div style="font-size: 48px; margin-bottom: 12px;">🎉</div>
+          <h5 class="modal-title text-white fw-bold mb-1" id="updateModalTitle">Nueva actualización disponible</h5>
+          <p class="text-white-50 small mb-0" id="updateModalVersion">Versión 0.0.0</p>
+        </div>
+      </div>
+      <div class="modal-body" style="padding: 24px;">
+        <div class="text-center mb-3">
+          <p class="text-muted mb-2" id="updateModalMessage">Hay una nueva versión del sistema lista para instalar.</p>
+          <div id="updateModalProgress" class="d-none">
+            <div class="progress" style="height: 8px; border-radius: 4px;">
+              <div id="updateModalProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" role="progressbar" style="width: 0%"></div>
+            </div>
+            <small class="text-muted mt-2 d-block" id="updateModalProgressText">Descargando... 0%</small>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer border-0" style="padding: 16px 24px 24px; justify-content: center; gap: 12px;">
+        <button type="button" class="btn btn-outline-secondary" id="updateModalLaterBtn" style="border-radius: 8px; padding: 8px 20px;">
+          Más tarde
+        </button>
+        <button type="button" class="btn btn-primary" id="updateModalInstallBtn" style="border-radius: 8px; padding: 8px 20px;">
+          <span id="updateModalInstallText">Reiniciar e instalar</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 function toggleSidebar() {
   document.getElementById("sidebar").classList.toggle("open");
   document.getElementById("overlay").classList.toggle("show");
 }
+
+// ─── CARGAR VERSIÓN ─────────────────────────────────────────────────────────────
+(async function loadVersion() {
+  const versionEl = document.getElementById("versionNumber");
+  if (versionEl && window.appInfo?.getVersion) {
+    try {
+      const version = await window.appInfo.getVersion();
+      versionEl.textContent = version || "N/A";
+    } catch (e) {
+      versionEl.textContent = "N/A";
+    }
+  } else if (versionEl) {
+    versionEl.textContent = "1.2.2";
+  }
+})();
 </script>
 <script src="assets/vendor/bootstrap.bundle.min.js"></script>
 <script src="js/index.dashboard.js"></script>
@@ -471,6 +526,20 @@ function toggleSidebar() {
   const progressPct  = document.getElementById("updateProgressPct");
   const installBtn  = document.getElementById("updateInstallBtn");
   const checkBtn    = document.getElementById("updateCheckBtn");
+
+  // Modal elements
+  const updateModal = document.getElementById("updateModal");
+  const updateModalTitle = document.getElementById("updateModalTitle");
+  const updateModalVersion = document.getElementById("updateModalVersion");
+  const updateModalMessage = document.getElementById("updateModalMessage");
+  const updateModalProgress = document.getElementById("updateModalProgress");
+  const updateModalProgressBar = document.getElementById("updateModalProgressBar");
+  const updateModalProgressText = document.getElementById("updateModalProgressText");
+  const updateModalInstallBtn = document.getElementById("updateModalInstallBtn");
+  const updateModalInstallText = document.getElementById("updateModalInstallText");
+  const updateModalLaterBtn = document.getElementById("updateModalLaterBtn");
+
+  let modalInstance = null;
 
   // No hacemos nada si no estamos en Electron (dev sin preload)
   if (!window.updater) {
@@ -502,26 +571,68 @@ function toggleSidebar() {
     progressPct.textContent = pct + "%";
   }
 
+  function showModal(version) {
+    if (updateModal && window.bootstrap?.Modal) {
+      updateModalTitle.textContent = "Nueva actualización disponible";
+      updateModalVersion.textContent = `Versión ${version}`;
+      updateModalMessage.textContent = "Hay una nueva versión del sistema lista para descargar.";
+      updateModalProgress.classList.add("d-none");
+      updateModalInstallBtn.disabled = false;
+      updateModalInstallText.textContent = "Descargar ahora";
+      
+      modalInstance = bootstrap.Modal.getOrCreateInstance(updateModal);
+      modalInstance.show();
+    }
+  }
+
+  function updateModalProgress(pct, speed) {
+    if (updateModalProgressBar && updateModalProgressText) {
+      updateModalProgressBar.style.width = pct + "%";
+      const speedText = speed ? ` · ${(speed / 1024).toFixed(0)} KB/s` : "";
+      updateModalProgressText.textContent = `Descargando... ${pct}%${speedText}`;
+    }
+  }
+
+  function showDownloadedModal(version) {
+    if (updateModalTitle && updateModalMessage) {
+      updateModalTitle.textContent = "Actualización lista";
+      updateModalVersion.textContent = `Versión ${version}`;
+      updateModalMessage.textContent = "La actualización se descargó correctamente. Haz clic en 'Reiniciar e instalar' para actualizar el sistema.";
+      updateModalProgress.classList.add("d-none");
+      updateModalInstallBtn.disabled = false;
+      updateModalInstallText.textContent = "Reiniciar e instalar";
+    }
+  }
+
   // ─── Escuchar eventos del main process ─────────────────────────────────
   window.updater.onStatus((data) => {
     switch (data.event) {
       case "checking":
         show("", "🔄", "Buscando actualización…");
-        // Auto-ocultar si no hay novedad después de 8 segundos
         clearTimeout(window._updaterHideTimer);
         window._updaterHideTimer = setTimeout(hide, 8000);
         break;
 
       case "not-available":
-        // No molestar al usuario, ocultar silenciosamente
         clearTimeout(window._updaterHideTimer);
         hide();
         break;
 
       case "available":
         clearTimeout(window._updaterHideTimer);
+        // Mostrar modal profesional
+        showModal(data.version || "");
+        // También mostrar banner
         show("", "⬇️", `Nueva versión disponible: v${data.version || ""}. Descargando…`, { progress: true });
         setProgress(0);
+        
+        // Mostrar progreso en modal
+        if (updateModalProgress) {
+          updateModalProgress.classList.remove("d-none");
+          updateModalMessage.textContent = "Descargando actualización...";
+          updateModalInstallBtn.disabled = true;
+          updateModalInstallText.textContent = "Descargando...";
+        }
         break;
 
       case "progress": {
@@ -529,23 +640,50 @@ function toggleSidebar() {
         const kb  = data.bytesPerSecond ? ` · ${(data.bytesPerSecond / 1024).toFixed(0)} KB/s` : "";
         show("", "⬇️", `Descargando actualización…${kb}`, { progress: true });
         setProgress(pct);
+        
+        // Actualizar progreso en modal
+        updateModalProgress(pct, data.bytesPerSecond);
         break;
       }
 
       case "downloaded":
         clearTimeout(window._updaterHideTimer);
         show("success", "✅", `v${data.version || ""} lista. Reinicia para instalar.`, { installBtn: true });
+        
+        // Actualizar modal a estado "descargado"
+        showDownloadedModal(data.version || "");
         break;
 
       case "error":
         clearTimeout(window._updaterHideTimer);
-        // Mostrar error brevemente y luego ocultar (no molestar)
         show("danger", "⚠️", "No se pudo verificar actualización.", { checkBtn: true });
         window._updaterHideTimer = setTimeout(hide, 12000);
         console.warn("[Updater]", data.message);
+        
+        // Cerrar modal si está abierto
+        if (modalInstance) {
+          modalInstance.hide();
+        }
         break;
     }
   });
+
+  // ─── Event listeners del modal ────────────────────
+  if (updateModalInstallBtn) {
+    updateModalInstallBtn.addEventListener("click", function() {
+      if (window.updater) {
+        window.updater.quitAndInstall();
+      }
+    });
+  }
+
+  if (updateModalLaterBtn) {
+    updateModalLaterBtn.addEventListener("click", function() {
+      if (modalInstance) {
+        modalInstance.hide();
+      }
+    });
+  }
 
   // ─── Funciones globales para los botones del banner ────────────────────
   window.updaterInstall = function() {
