@@ -189,7 +189,7 @@
     if (pagoMonto) pagoMonto.textContent = bs(data.monto_adeudado);
     if (pagoFecha) pagoFecha.value = todayISO();
     if (pagoMetodo) pagoMetodo.value = "Efectivo";
-    if (pagoObs) pagoObs.value = `Pago mensualidad ${data.mes || ""} — ${data.curso_nombre || ""}`.trim();
+    if (pagoObs) pagoObs.value = `Pago saldo pendiente — ${data.curso_nombre || ""}`.trim();
     if (pagoMsg) { pagoMsg.textContent = ""; pagoMsg.className = "text-muted"; }
     if (btnConfirmarPago) btnConfirmarPago.disabled = false;
     if (!modalPago && window.bootstrap?.Modal && modalPagoEl) {
@@ -206,7 +206,7 @@
       return;
     }
     const metodo = normStr(pagoMetodo?.value) || "Efectivo";
-    const obs = normStr(pagoObs?.value) || `Mensualidad ${currentPagoData.mes || ""}`;
+    const obs = normStr(pagoObs?.value) || `Pago saldo pendiente`;
     const monto = Number(currentPagoData.monto_adeudado || 0);
     if (monto <= 0) {
       if (pagoMsg) { pagoMsg.textContent = "El monto adeudado es 0."; pagoMsg.className = "text-danger"; }

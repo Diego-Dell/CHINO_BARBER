@@ -164,7 +164,7 @@
   }
 
   function renderTopCursos(rows) {
-    topCursosCache = rows || [];
+    if (rows !== undefined) topCursosCache = rows || [];
     const q = String(qTopCursos?.value || "").trim().toLowerCase();
     const filtered = q ? topCursosCache.filter(r => String(r.curso || "").toLowerCase().includes(q)) : topCursosCache;
 
@@ -282,12 +282,14 @@
 
   function applyPreset(preset) {
     const now = new Date();
-    let desde, hasta = isoFromDate(now);
+    let desde;
+    const hasta = isoFromDate(now);
     if (preset === "7d")  desde = isoFromDate(addDays(now, -6));
     else if (preset === "30d") desde = isoFromDate(addDays(now, -29));
     else if (preset === "90d") desde = isoFromDate(addDays(now, -89));
     else if (preset === "12m") desde = isoFromDate(new Date(now.getFullYear(), now.getMonth() - 11, 1));
     else if (preset === "ytd") desde = isoFromDate(startOfYear(now));
+    else desde = isoFromDate(new Date(now.getFullYear(), now.getMonth() - 11, 1)); // fallback seguro
     if (desdeEl) desdeEl.value = desde;
     if (hastaEl) hastaEl.value = hasta;
   }

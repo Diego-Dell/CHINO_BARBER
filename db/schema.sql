@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS inscripciones (
   alumno_id INTEGER NOT NULL,
   curso_id INTEGER NOT NULL,
   fecha_inscripcion TEXT NOT NULL DEFAULT (date('now')),
+  nro_cuotas INTEGER NOT NULL DEFAULT 1 CHECK(nro_cuotas >= 1),
   estado TEXT NOT NULL DEFAULT 'Activa'
     CHECK(estado IN ('Activa','Finalizada','Cancelada')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -156,11 +157,14 @@ CREATE TABLE IF NOT EXISTS pagos (
   inscripcion_id INTEGER NOT NULL,
   fecha_pago TEXT NOT NULL DEFAULT (date('now')),
   monto REAL NOT NULL CHECK(monto >= 0),
+  cuota_nro INTEGER,
   estado TEXT NOT NULL DEFAULT 'Pagado'
     CHECK(estado IN ('Pagado','Pendiente','Anulado')),
   metodo TEXT NOT NULL DEFAULT 'Efectivo'
     CHECK(metodo IN ('Efectivo','Transferencia','QR','Tarjeta','Otro')),
   observaciones TEXT,
+  anulado_motivo TEXT,
+  anulado_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (inscripcion_id) REFERENCES inscripciones(id)
@@ -173,6 +177,12 @@ DROP INDEX IF EXISTS ix_pagos_fecha;
 CREATE INDEX IF NOT EXISTS ix_pagos_fecha ON pagos(fecha_pago);
 
 CREATE INDEX IF NOT EXISTS ix_pagos_estado ON pagos(estado);
+CREATE INDEX IF NOT EXISTS ix_pagos_insc_fecha ON pagos(inscripcion_id, fecha_pago);
+CREATE INDEX IF NOT EXISTS ix_pagos_fecha_estado ON pagos(fecha_pago, estado);
+CREATE INDEX IF NOT EXISTS ix_pagos_insc_estado_fecha ON pagos(inscripcion_id, estado, fecha_pago);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_insc_cuota_pagado
+ON pagos(inscripcion_id, cuota_nro)
+WHERE estado='Pagado' AND cuota_nro IS NOT NULL;
 
 -- =========================
 -- EGRESOS

@@ -67,6 +67,17 @@ async function ensureColumn(table, colName, colType) {
   }
 }
 
+async function ensureIndex(indexName, createSql) {
+  if (!indexName || !createSql) return;
+  try {
+    await dbRun(createSql);
+    console.log("[DB] Index ok:", indexName);
+  } catch (e) {
+    // Si ya existe o SQLite no soporta algo en versiones antiguas, no tumbar el arranque.
+    console.warn("[DB] Index warn:", indexName, e.message);
+  }
+}
+
 async function runMigrations() {
   try {
     console.log("[DB] Ejecutando migraciones...");
@@ -174,6 +185,12 @@ async function runMigrations() {
     // ==== PASO 5: MIGRACIONES DE COMPATIBILIDAD DE COLUMNAS ====
     await ensureColumn("cursos", "fecha_inicio", "TEXT");
     await ensureColumn("cursos", "fecha_fin", "TEXT");
+    // Plan de cuotas por inscripción (alumno+curso)
+    await ensureColumn("inscripciones", "nro_cuotas", "INTEGER NOT NULL DEFAULT 1 CHECK(nro_cuotas >= 1)");
+    // Cuotas y auditoría de anulación en pagos
+    await ensureColumn("pagos", "cuota_nro", "INTEGER");
+    await ensureColumn("pagos", "anulado_motivo", "TEXT");
+    await ensureColumn("pagos", "anulado_at", "TEXT");
 
     try {
       const cols = await dbAll("PRAGMA table_info(pagos);");
@@ -188,6 +205,30 @@ async function runMigrations() {
     } catch (e) {
       console.warn("[DB] Migracion pagos warn:", e.message);
     }
+
+    // Índices críticos para patrones reales de consulta
+    await ensureIndex(
+      "ix_pagos_insc_fecha",
+      "CREATE INDEX IF NOT EXISTS ix_pagos_insc_fecha ON pagos(inscripcion_id, fecha_pago);"
+    );
+    await ensureIndex(
+      "ix_pagos_fecha_estado",
+      "CREATE INDEX IF NOT EXISTS ix_pagos_fecha_estado ON pagos(fecha_pago, estado);"
+    );
+    await ensureIndex(
+      "ix_pagos_insc_estado_fecha",
+      "CREATE INDEX IF NOT EXISTS ix_pagos_insc_estado_fecha ON pagos(inscripcion_id, estado, fecha_pago);"
+    );
+    // Unicidad de cuota por inscripción (solo para pagos efectivamente pagados)
+    await ensureIndex(
+      "ux_pagos_insc_cuota_pagado",
+      "CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_insc_cuota_pagado ON pagos(inscripcion_id, cuota_nro) WHERE estado = 'Pagado' AND cuota_nro IS NOT NULL;"
+    );
+
+    // Limpieza: evitar índice duplicado de asistencia (solo si existe)
+    try {
+      await dbRun("DROP INDEX IF EXISTS ux_asistencia_inscripcion_fecha;");
+    } catch (_) {}
 
     await ensureColumn("inventario_items", "precio_minimo", "REAL NOT NULL DEFAULT 0 CHECK(precio_minimo >= 0)");
     await ensureColumn("inventario_movimientos", "precio_venta", "REAL");

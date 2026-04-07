@@ -44,6 +44,20 @@ function isISODate(s) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
 }
 
+function isISOMonth(s) {
+  return /^\d{4}-\d{2}$/.test(String(s || ""));
+}
+
+function nextMonthStart(yyyyMm) {
+  const [y, m] = String(yyyyMm).split("-").map((x) => Number(x));
+  const year = y + (m >= 12 ? 1 : 0);
+  const month = m >= 12 ? 1 : (m + 1);
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`;
+}
+
+const PAGO_ESTADOS = new Set(["Pagado", "Pendiente", "Anulado"]);
+const PAGO_METODOS = new Set(["Efectivo", "Transferencia", "QR", "Tarjeta", "Otro"]);
+
 // ===============================
 // GET /api/pagos?q=&estado=&mes=YYYY-MM
 // Query params:
@@ -73,14 +87,22 @@ router.get("/", async (req, res) => {
 
     // FILTRO: estado del pago (Pagado, Pendiente, Anulado, etc)
     if (estado) {
+      if (!PAGO_ESTADOS.has(estado)) {
+        return res.status(400).json({ ok: false, error: "Estado inválido" });
+      }
       where.push(`p.estado = ?`);
       params.push(estado);
     }
 
     // FILTRO: mes de fecha_pago (YYYY-MM)
     if (mes) {
-      where.push(`substr(p.fecha_pago, 1, 7) = ?`);
-      params.push(mes);
+      if (!isISOMonth(mes)) {
+        return res.status(400).json({ ok: false, error: "Mes inválido (usa YYYY-MM)" });
+      }
+      const start = `${mes}-01`;
+      const end = nextMonthStart(mes);
+      where.push(`p.fecha_pago >= ? AND p.fecha_pago < ?`);
+      params.push(start, end);
     }
 
     // SQL: JOIN pagos → inscripciones → alumnos y cursos
@@ -91,9 +113,12 @@ router.get("/", async (req, res) => {
         p.inscripcion_id,
         p.fecha_pago AS fecha,
         p.monto,
+        p.cuota_nro,
         p.estado,
         p.metodo,
         p.observaciones,
+        p.anulado_motivo,
+        p.anulado_at,
         p.created_at,
 
         a.id AS alumno_id,
@@ -143,6 +168,10 @@ router.post("/", async (req, res) => {
     const estado = normStr(req.body.estado) || "Pagado";
     const metodo = normStr(req.body.metodo) || "Efectivo";
     const observaciones = normStr(req.body.observaciones);
+    const cuota_nro_raw = req.body.cuota_nro;
+    const cuota_nro = cuota_nro_raw === undefined || cuota_nro_raw === null || String(cuota_nro_raw).trim() === ""
+      ? null
+      : Math.trunc(toNum(cuota_nro_raw, NaN));
 
     // Validación: inscripcion_id requerido
     if (!inscripcion_id) {
@@ -159,45 +188,112 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Monto debe ser > 0" });
     }
 
+    if (!PAGO_ESTADOS.has(estado)) {
+      return res.status(400).json({ ok: false, error: "Estado inválido" });
+    }
+    if (!PAGO_METODOS.has(metodo)) {
+      return res.status(400).json({ ok: false, error: "Método inválido" });
+    }
+
+    if (cuota_nro !== null) {
+      if (!Number.isFinite(cuota_nro) || cuota_nro < 1) {
+        return res.status(400).json({ ok: false, error: "cuota_nro inválido" });
+      }
+    }
+
     // Validación: verificar que la inscripción existe
-    const insc = await dbGet(`SELECT id FROM inscripciones WHERE id = ?`, [inscripcion_id]);
+    const insc = await dbGet(`SELECT id, COALESCE(nro_cuotas, 1) AS nro_cuotas FROM inscripciones WHERE id = ?`, [inscripcion_id]);
     if (!insc) {
       return res.status(404).json({ ok: false, error: "Inscripción no existe" });
     }
 
-    // Validación: no permitir duplicado para misma inscripción + mismo mes + mismas observaciones
-    // Se incluye observaciones en el chequeo para permitir múltiples cuotas en el mismo mes
-    // (p.ej. "Cuota 1 - Curso X" y "Cuota 2 - Curso X" son pagos distintos aunque caigan en el mismo mes)
-    const mes = fecha.slice(0, 7); // YYYY-MM
-    const dupCheck = await dbGet(
-      `SELECT id FROM pagos 
-       WHERE inscripcion_id = ? 
-         AND substr(fecha_pago, 1, 7) = ? 
-         AND estado = 'Pagado'
-         AND (? = '' OR observaciones = ?)`,
-      [inscripcion_id, mes, observaciones, observaciones]
-    );
-    if (dupCheck) {
-      return res.status(409).json({
-        ok: false,
-        error: `Ya existe un pago con las mismas observaciones para esta inscripción en el mes ${mes}. No se permiten duplicados.`,
-      });
+    if (cuota_nro !== null && cuota_nro > Number(insc.nro_cuotas || 1)) {
+      return res.status(400).json({ ok: false, error: "cuota_nro excede el plan de cuotas de la inscripción" });
     }
 
-    // Insertar el pago
-    const r = await dbRun(
-      `INSERT INTO pagos (inscripcion_id, fecha_pago, monto, estado, metodo, observaciones)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [inscripcion_id, fecha, monto, estado, metodo, observaciones]
-    );
+    // Transacción: validación + inserción consistente
+    await dbRun("BEGIN IMMEDIATE");
+    try {
+      // Anti-duplicado robusto:
+      // - Si viene cuota_nro: una cuota pagada por inscripción (estado Pagado) no puede repetirse.
+      // - Si no viene cuota_nro: evitamos duplicado exacto por (insc, fecha, monto, metodo, obs) solo cuando estado=Pagado.
+      let dup = null;
+      if (cuota_nro !== null && estado === "Pagado") {
+        dup = await dbGet(
+          `SELECT id FROM pagos
+           WHERE inscripcion_id = ?
+             AND cuota_nro = ?
+             AND estado = 'Pagado'
+           LIMIT 1`,
+          [inscripcion_id, cuota_nro]
+        );
+      } else if (estado === "Pagado") {
+        dup = await dbGet(
+          `SELECT id FROM pagos
+           WHERE inscripcion_id = ?
+             AND fecha_pago = ?
+             AND monto = ?
+             AND metodo = ?
+             AND COALESCE(observaciones,'') = ?
+             AND estado = 'Pagado'
+           LIMIT 1`,
+          [inscripcion_id, fecha, monto, metodo, observaciones]
+        );
+      }
+      if (dup) {
+        await dbRun("ROLLBACK").catch(() => {});
+        return res.status(409).json({ ok: false, error: "Pago duplicado detectado. Verifica la cuota/fecha." });
+      }
 
-    // Recuperar el pago creado para devolverlo
-    const created = await dbGet(`SELECT * FROM pagos WHERE id = ?`, [r.lastID]);
-    
-    return res.json({ ok: true, pago: created });
+      // Insertar el pago
+      const r = await dbRun(
+        `INSERT INTO pagos (inscripcion_id, fecha_pago, monto, cuota_nro, estado, metodo, observaciones)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [inscripcion_id, fecha, monto, cuota_nro, estado, metodo, observaciones]
+      );
+
+      const created = await dbGet(`SELECT * FROM pagos WHERE id = ?`, [r.lastID]);
+      await dbRun("COMMIT");
+      return res.json({ ok: true, pago: created });
+    } catch (e) {
+      await dbRun("ROLLBACK").catch(() => {});
+      throw e;
+    }
   } catch (err) {
     console.error("[POST /api/pagos] Error:", err);
     return res.status(500).json({ ok: false, error: err.message || "Error al registrar pago" });
+  }
+});
+
+// ===============================
+// POST /api/pagos/:id/anular
+// Anula un pago (soft) por ID
+// Body: { motivo?: string }
+// ===============================
+router.post("/:id/anular", async (req, res) => {
+  try {
+    const id = toNum(req.params.id, 0);
+    if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
+    const motivo = normStr(req.body?.motivo);
+
+    const current = await dbGet(`SELECT id, estado FROM pagos WHERE id = ?`, [id]);
+    if (!current) return res.status(404).json({ ok: false, error: "Pago no encontrado" });
+    if (String(current.estado) === "Anulado") return res.json({ ok: true, changes: 0 });
+
+    await dbRun(
+      `UPDATE pagos
+       SET estado = 'Anulado',
+           anulado_motivo = ?,
+           anulado_at = datetime('now'),
+           updated_at = datetime('now')
+       WHERE id = ?`,
+      [motivo || null, id]
+    );
+
+    return res.json({ ok: true, changes: 1 });
+  } catch (err) {
+    console.error("[POST /api/pagos/:id/anular] Error:", err);
+    return res.status(500).json({ ok: false, error: err.message || "Error al anular pago" });
   }
 });
 
@@ -207,6 +303,10 @@ router.post("/", async (req, res) => {
 // ===============================
 router.delete("/:id", async (req, res) => {
   try {
+    // Hard delete deshabilitado por defecto (auditoría contable).
+    if (String(process.env.ALLOW_HARD_DELETE_PAYMENTS || "").toLowerCase() !== "true") {
+      return res.status(403).json({ ok: false, error: "Operación no permitida. Usa Anular." });
+    }
     const id = toNum(req.params.id, 0);
     if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
@@ -220,7 +320,7 @@ router.delete("/:id", async (req, res) => {
 
 // ===============================
 // POST /api/pagos/reset-plan
-// Borra todos los pagos de una inscripción (para reconfigurable el plan de cuotas)
+// Anula todos los pagos de una inscripción (para reconfigurar el plan de cuotas sin perder auditoría)
 // Body: { inscripcion_id: number }
 // ===============================
 router.post("/reset-plan", async (req, res) => {
@@ -239,7 +339,15 @@ router.post("/reset-plan", async (req, res) => {
     // Transacción usando async/await
     await dbRun("BEGIN IMMEDIATE");
     try {
-      const r = await dbRun(`DELETE FROM pagos WHERE inscripcion_id = ?`, [inscripcion_id]);
+      const r = await dbRun(
+        `UPDATE pagos
+         SET estado = 'Anulado',
+             anulado_motivo = COALESCE(anulado_motivo, 'Cambio de plan de cuotas'),
+             anulado_at = COALESCE(anulado_at, datetime('now')),
+             updated_at = datetime('now')
+         WHERE inscripcion_id = ? AND estado <> 'Anulado'`,
+        [inscripcion_id]
+      );
       await dbRun("COMMIT");
       return res.json({ ok: true, changes: r.changes || 0 });
     } catch (err) {

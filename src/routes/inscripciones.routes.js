@@ -205,6 +205,7 @@ router.get("/", async (req, res) => {
       SELECT
         i.id AS inscripcion_id,
         i.fecha_inscripcion,
+        i.nro_cuotas,
         i.estado AS inscripcion_estado,
 
         a.id AS alumno_id,
@@ -286,6 +287,7 @@ router.get("/:id", async (req, res) => {
       SELECT
         i.id AS inscripcion_id,
         i.fecha_inscripcion,
+        i.nro_cuotas,
         i.estado AS inscripcion_estado,
 
         a.id AS alumno_id,
@@ -380,13 +382,17 @@ router.put("/:id", adminOnly, async (req, res) => {
     if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
     const current = await dbGet(
-      `SELECT id, alumno_id, curso_id, fecha_inscripcion, estado FROM inscripciones WHERE id = ?`,
+      `SELECT id, alumno_id, curso_id, fecha_inscripcion, estado, COALESCE(nro_cuotas, 1) AS nro_cuotas FROM inscripciones WHERE id = ?`,
       [id]
     );
     if (!current) return res.status(404).json({ ok: false, error: "Inscripción no encontrada" });
 
     const newEstado = req.body?.estado !== undefined ? normalizeEstadoInscripcion(req.body.estado) : current.estado;
     const newFecha = normStr(req.body?.fecha_inscripcion) || current.fecha_inscripcion || todayISO();
+    const bodyNroCuotas = req.body?.nro_cuotas;
+    const newNroCuotas = bodyNroCuotas !== undefined && bodyNroCuotas !== null
+      ? Math.max(1, toInt(bodyNroCuotas, 1))
+      : Math.max(1, toInt(current.nro_cuotas, 1));
 
     // reactivar: valida curso disponible + cupo + duplicado activo
     if (current.estado !== "Activa" && newEstado === "Activa") {
@@ -401,8 +407,8 @@ router.put("/:id", adminOnly, async (req, res) => {
     }
 
     await dbRun(
-      `UPDATE inscripciones SET fecha_inscripcion = ?, estado = ? WHERE id = ?`,
-      [newFecha, newEstado, id]
+      `UPDATE inscripciones SET fecha_inscripcion = ?, estado = ?, nro_cuotas = ? WHERE id = ?`,
+      [newFecha, newEstado, newNroCuotas, id]
     );
 
     return res.json({ ok: true });

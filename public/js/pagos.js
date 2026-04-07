@@ -211,6 +211,16 @@ function resetPagoModalState({ keepCurso = false, keepAlumno = false } = {}) {
     return fetchJSON(`/api/pagos/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
+  async function apiAnularPago(id, { motivo } = {}) {
+    if (!id) throw new Error("ID inválido");
+    const m = String(motivo || "").trim();
+    return fetchJSON(`/api/pagos/${encodeURIComponent(id)}/anular`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(m ? { motivo: m } : {}),
+    });
+  }
+
   // ================= INSCRIPCIONES (para obtener inscripcion_id) =================
   async function apiFindInscripcionActiva(alumno_id, curso_id) {
     const qs = new URLSearchParams({
@@ -227,6 +237,28 @@ function resetPagoModalState({ keepCurso = false, keepAlumno = false } = {}) {
     return row?.inscripcion_id || row?.id || null;
   }
 
+  async function apiGetInscripcionActivaRow(alumno_id, curso_id) {
+    const qs = new URLSearchParams({
+      alumno_id: String(alumno_id || ""),
+      curso_id: String(curso_id || ""),
+      estado: "Activa",
+      limit: "1",
+      offset: "0",
+    }).toString();
+
+    const res = await fetchJSON(`/api/inscripciones?${qs}`);
+    const rows = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
+    return rows[0] || null;
+  }
+
+  async function apiUpdateInscripcion(inscripcion_id, payload) {
+    return fetchJSON(`/api/inscripciones/${encodeURIComponent(inscripcion_id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
+  }
+
 // ❌ NO auto-crear inscripciones desde Pagos.
 // Pago debe requerir inscripcion_id existente (flujo: primero Inscribir, luego Pagar).
 async function getInscripcionIdRequired(alumno_id, curso_id) {
@@ -236,6 +268,24 @@ async function getInscripcionIdRequired(alumno_id, curso_id) {
   const err = new Error("El alumno no está inscrito en este curso. Primero inscribe y luego registra el pago.");
   err.code = "NO_INSCRIPCION";
   throw err;
+}
+
+async function syncNroCuotasFromDB({ alumno_id, curso_id } = {}) {
+  if (!pgNroCuotas) return;
+  const aId = Number(alumno_id || pgAlumnoId?.value || 0);
+  const cId = Number(curso_id || pgCursoId?.value || 0);
+  if (!aId || !cId) return;
+
+  try {
+    const row = await apiGetInscripcionActivaRow(aId, cId);
+    const nro = Math.max(1, Number(row?.nro_cuotas || 1));
+    if (Number.isFinite(nro)) {
+      pgNroCuotas.value = String(nro);
+      prevNroCuotas = nro;
+    }
+  } catch (_) {
+    // si falla, dejamos el valor actual
+  }
 }
 
 
@@ -465,6 +515,8 @@ async function getInscripcionIdRequired(alumno_id, curso_id) {
 
         if (a) {
           setAlumnoUI(a);
+          await syncNroCuotasFromDB({ alumno_id: a.id, curso_id: Number(pgCursoId?.value || 0) });
+          rebuildCuotas();
           await refreshPagosPorCuota();
           renderCuotas();
           if (msgPago) {
@@ -552,7 +604,9 @@ async function refreshPagosPorCuota() {
       .reduce((acc, r) => acc + Number(r.monto || 0), 0);
 
     for (const r of filtrados) {
-      const nro = parseCuotaNroFromObs(r.observaciones);
+      const nro = Number.isFinite(Number(r.cuota_nro)) && Number(r.cuota_nro) >= 1
+        ? Number(r.cuota_nro)
+        : parseCuotaNroFromObs(r.observaciones);
       if (!nro) continue;
       const prev = pagosPorCuota.get(nro);
       if (!prev) {
@@ -732,8 +786,8 @@ async function refreshPagosPorCuota() {
                 <button type="button" class="btn btn-outline-primary" data-print-id="${esc(r.id)}" title="Imprimir recibo">
                   🖨️
                 </button>
-                <button type="button" class="btn btn-outline-danger" data-del-id="${esc(r.id)}" title="Eliminar">
-                  🗑️
+                <button type="button" class="btn btn-outline-warning" data-anular-id="${esc(r.id)}" title="Anular">
+                  🚫
                 </button>
               </div>
             </td>
@@ -742,21 +796,21 @@ async function refreshPagosPorCuota() {
       })
       .join("");
 
-    // ✅ listeners eliminar (DESPUÉS del innerHTML)
-    tablaPagosBody.querySelectorAll("button[data-del-id]").forEach((btn) => {
+    // ✅ listeners anular (DESPUÉS del innerHTML)
+    tablaPagosBody.querySelectorAll("button[data-anular-id]").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        const id = btn.getAttribute("data-del-id");
-        const ok = window.confirm(`¿Eliminar el pago #${id}? Esta acción no se puede deshacer.`);
+        const id = btn.getAttribute("data-anular-id");
+        const ok = window.confirm(`¿Anular el pago #${id}? Esto mantendrá el registro para auditoría.`);
         if (!ok) return;
 
         try {
           btn.disabled = true;
-          await apiDeletePago(id);
+          await apiAnularPago(id, { motivo: "Anulado desde UI" });
           await cargarPagos();
           await refreshPagosPorCuota();
           renderCuotas();
         } catch (e) {
-          alert("No se pudo eliminar: " + String(e.message || e));
+          alert("No se pudo anular: " + String(e.message || e));
         } finally {
           btn.disabled = false;
         }
@@ -962,6 +1016,7 @@ async function refreshPagosPorCuota() {
 
     await refreshDeudoresList({ q: normStr(pgAlumnoSearch?.value) });
 
+    await syncNroCuotasFromDB();
     rebuildCuotas();
     await refreshPagosPorCuota();
     renderCuotas();
@@ -979,6 +1034,9 @@ async function refreshPagosPorCuota() {
     const hayPagos = pagosPorCuota && pagosPorCuota.size > 0;
     const cambioReal = prevNroCuotas != null && nuevo !== prevNroCuotas;
 
+    const alumno_id = Number(pgAlumnoId?.value || 0);
+    const curso_id = Number(pgCursoId?.value || 0);
+
     if (cambioReal && hayPagos) {
       const ok = window.confirm(
         "Ya existen pagos registrados con el plan anterior. Si cambias el número de cuotas, se borrarán esos pagos para reconfigurar el plan de forma consistente. ¿Continuar?"
@@ -989,8 +1047,6 @@ async function refreshPagosPorCuota() {
       }
 
 try {
-  const alumno_id = Number(pgAlumnoId?.value || 0);
-  const curso_id = Number(pgCursoId?.value || 0);
   const inscripcion_id = await getInscripcionIdRequired(alumno_id, curso_id);
 
   await apiResetPlan(inscripcion_id);
@@ -1016,6 +1072,17 @@ pagoSeleccionado = null;
     }
 
     prevNroCuotas = nuevo;
+
+    // ✅ Guardar nro_cuotas por inscripción (alumno+curso)
+    try {
+      if (alumno_id && curso_id) {
+        const inscripcion_id = await getInscripcionIdRequired(alumno_id, curso_id);
+        await apiUpdateInscripcion(inscripcion_id, { nro_cuotas: nuevo });
+      }
+    } catch (_) {
+      // no bloquear UI si no se pudo persistir
+    }
+
     rebuildCuotas();
     await refreshPagosPorCuota();
     renderCuotas();
@@ -1033,6 +1100,8 @@ pagoSeleccionado = null;
       const a = await apiGetAlumnoByDocumento(doc);
       if (a && a.id) {
         setAlumnoUI(a);
+        await syncNroCuotasFromDB({ alumno_id: a.id, curso_id: Number(pgCursoId?.value || 0) });
+        rebuildCuotas();
         await refreshPagosPorCuota();
         renderCuotas();
         if (msgPago) {
@@ -1048,6 +1117,8 @@ pagoSeleccionado = null;
     const a = alumnosCache.find((x) => normStr(x.nombre).toLowerCase() === q);
     if (a) {
       setAlumnoUI(a);
+      await syncNroCuotasFromDB({ alumno_id: a.id, curso_id: Number(pgCursoId?.value || 0) });
+      rebuildCuotas();
       await refreshPagosPorCuota();
       renderCuotas();
     }
@@ -1195,6 +1266,7 @@ const inscripcion_id = await getInscripcionIdRequired(alumnoDb.id, Number(cursoI
         inscripcion_id,
         fecha,
         monto: cuota.monto,
+        cuota_nro: cuota.nro,
         metodo: pgMetodo?.value || "Efectivo",
         estado: "Pagado",
         observaciones: normStr(pgObs?.value) || `Cuota ${cuota.nro} - ${curso?.nombre || ""}`,
@@ -1240,6 +1312,7 @@ const inscripcion_id = await getInscripcionIdRequired(alumnoDb.id, Number(cursoI
       if (a?.id) setAlumnoUI(a);
     }
 
+    await syncNroCuotasFromDB();
     rebuildCuotas();
     await refreshPagosPorCuota();
     renderCuotas();
@@ -1301,6 +1374,8 @@ document.getElementById("modalPago")?.addEventListener("shown.bs.modal", async (
       pgFecha.value = `${yyyy}-${mm}-${dd}`;
     }
 
+    await syncNroCuotasFromDB();
+    rebuildCuotas();
     prevNroCuotas = Number(pgNroCuotas?.value || 1);
 
     await refreshPagosPorCuota();
