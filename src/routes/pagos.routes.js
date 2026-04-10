@@ -228,8 +228,7 @@ router.post("/", async (req, res) => {
 
     const monto_centavos = Math.round(monto * 100);
 
-    await dbRun("BEGIN IMMEDIATE");
-    try {
+    await db.runInTransaction(async () => {
       let dup = null;
       if (cuota_nro !== null && cobro_estado === "Pagado") {
         dup = await dbGet(
@@ -276,12 +275,8 @@ router.post("/", async (req, res) => {
         }),
         "admin"
       );
-      await dbRun("COMMIT");
       return res.json({ ok: true, pago: created });
-    } catch (e) {
-      await dbRun("ROLLBACK").catch(() => {});
-      throw e;
-    }
+    });
   } catch (err) {
     console.error("[POST /api/pagos] Error:", err);
     return res.status(500).json({ ok: false, error: err.message || "Error al registrar pago" });
@@ -300,8 +295,7 @@ router.post("/reset-plan", async (req, res) => {
       return res.status(404).json({ ok: false, error: "Inscripción no existe" });
     }
 
-    await dbRun("BEGIN IMMEDIATE");
-    try {
+    await db.runInTransaction(async () => {
       const motivo = "Cambio de plan de cuotas";
       const r = await dbRun(
         `UPDATE pagos
@@ -313,12 +307,8 @@ router.post("/reset-plan", async (req, res) => {
         [motivo, inscripcion_id]
       );
       await writeLog("pagos_plan_reset", JSON.stringify({ inscripcion_id, changes: r.changes || 0 }), "admin");
-      await dbRun("COMMIT");
       return res.json({ ok: true, changes: r.changes || 0 });
-    } catch (err) {
-      await dbRun("ROLLBACK").catch(() => {});
-      throw err;
-    }
+    });
   } catch (err) {
     console.error("[POST /api/pagos/reset-plan] error:", err);
     return res.status(500).json({ ok: false, error: err.message || "Error al resetear plan" });
@@ -329,20 +319,17 @@ async function anularPagoHandler(req, res) {
   try {
     const id = toNum(req.params.id, 0);
     if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
-    const motivo = normStr(req.body?.motivo);
+    const motivo = normStr(req.body?.motivo_anulacion || req.body?.motivo);
     if (motivo.length < 2) {
       return res.status(400).json({ ok: false, error: "Motivo de anulación requerido" });
     }
 
-    await dbRun("BEGIN IMMEDIATE");
-    try {
+    await db.runInTransaction(async () => {
       const current = await dbGet(`SELECT id, estado FROM pagos WHERE id = ?`, [id]);
       if (!current) {
-        await dbRun("ROLLBACK").catch(() => {});
         return res.status(404).json({ ok: false, error: "Pago no encontrado" });
       }
       if (String(current.estado) === "anulado") {
-        await dbRun("ROLLBACK").catch(() => {});
         return res.json({ ok: true, changes: 0 });
       }
 
@@ -380,12 +367,8 @@ async function anularPagoHandler(req, res) {
       } catch (_) {
         await writeLog("pago_anulado", JSON.stringify({ pago_id: id, motivo }), "admin");
       }
-      await dbRun("COMMIT");
       return res.json({ ok: true, changes: 1 });
-    } catch (e) {
-      await dbRun("ROLLBACK").catch(() => {});
-      throw e;
-    }
+    });
   } catch (err) {
     console.error("[PUT/POST /api/pagos/:id/anular] Error:", err);
     return res.status(500).json({ ok: false, error: err.message || "Error al anular pago" });

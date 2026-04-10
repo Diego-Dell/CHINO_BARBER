@@ -499,8 +499,7 @@ router.post("/prestamos", adminOnly, async (req, res) => {
     const stock = await getStockActual(item_id);
     if (stock - cantidad < 0) return res.status(400).json({ ok: false, error: `Stock insuficiente (${stock} disponibles)` });
 
-    await dbRun("BEGIN IMMEDIATE");
-    try {
+    await db.runInTransaction(async () => {
       const movR = await insertMovimiento({ item_id, fecha, tipo: "Prestamo", cantidad, costo_unitario, precio_unitario: 0, motivo: nota, curso_id, instructor_id });
       let prestamoId = null;
       if (HAS_PRESTAMOS_TABLE) {
@@ -510,12 +509,8 @@ router.post("/prestamos", adminOnly, async (req, res) => {
           [item_id, cantidad, instructor_id, curso_id, fecha, ...(P_HAS_NOTA ? [nota] : [])]);
         prestamoId = r2.lastID;
       }
-      await dbRun("COMMIT");
       return res.status(201).json({ ok: true, id: prestamoId || movR.lastID });
-    } catch (e) {
-      await dbRun("ROLLBACK").catch(() => {});
-      throw e;
-    }
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "Error registrando préstamo: " + err.message });
@@ -543,8 +538,7 @@ router.post("/prestamos/:id/devolver", adminOnly, async (req, res) => {
       if (pendiente <= 0) return res.status(400).json({ ok: false, error: "Préstamo ya devuelto" });
       if (cantidad > pendiente) return res.status(400).json({ ok: false, error: "Supera lo pendiente" });
     }
-    await dbRun("BEGIN IMMEDIATE");
-    try {
+    await db.runInTransaction(async () => {
       await insertMovimiento({ item_id: p.item_id, fecha, tipo: "Devolucion", cantidad: Math.abs(cantidad), costo_unitario: 0, precio_unitario: 0, motivo: nota, curso_id: p.curso_id, instructor_id: p.instructor_id });
       const sets = [], params = [];
       if (P_HAS_CANT_DEV) {
@@ -559,12 +553,8 @@ router.post("/prestamos/:id/devolver", adminOnly, async (req, res) => {
       }
       sets.push("updated_at = datetime('now')");
       await dbRun(`UPDATE inventario_prestamos SET ${sets.join(", ")} WHERE id = ?`, [...params, id]);
-      await dbRun("COMMIT");
       return res.json({ ok: true });
-    } catch (e) {
-      await dbRun("ROLLBACK").catch(() => {});
-      throw e;
-    }
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "Error registrando devolución" });

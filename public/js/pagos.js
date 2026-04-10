@@ -222,7 +222,7 @@ function resetPagoModalState({ keepCurso = false, keepAlumno = false } = {}) {
     return fetchJSON(`/api/pagos/${encodeURIComponent(id)}/anular`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ motivo: m }),
+      body: JSON.stringify({ motivo_anulacion: m }),
     });
   }
 
@@ -800,6 +800,9 @@ async function refreshPagosPorCuota() {
         const anulado = String(r.estado || "").toLowerCase() === "anulado";
         const badge =
           cobro === "Pagado" ? "bg-success" : cobro === "Pendiente" ? "bg-warning text-dark" : "bg-secondary";
+        const vidaBadge = anulado
+          ? `<span class="badge bg-danger ms-1">ANULADO</span>`
+          : "";
         const rowCls = anulado ? "text-danger text-decoration-line-through opacity-75" : "";
 
         const anulInfo = anulado
@@ -817,7 +820,7 @@ async function refreshPagosPorCuota() {
             <td>${esc(r.alumno_documento || "—")}</td>
             <td>${esc(r.curso_nombre || "—")}</td>
             <td class="text-end">${bs(r.monto)}</td>
-            <td><span class="badge ${badge}">${esc(cobro)}${anulado ? " · anulado" : ""}</span></td>
+            <td><span class="badge ${badge}">${esc(cobro)}</span>${vidaBadge}</td>
             <td>${esc(r.metodo || "—")}</td>
             <td class="text-muted small">${esc(r.observaciones || "—")}${anulInfo}</td>
             <td class="text-end">

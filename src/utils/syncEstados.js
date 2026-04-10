@@ -116,52 +116,37 @@ async function withDbLock({ name = LOCK_NAME, ttlMs = 60_000 }, fn) {
   const owner = `${process.pid}-${Date.now()}`;
   const ttlSeconds = Math.max(5, Math.ceil((Number(ttlMs) || 60_000) / 1000));
 
-  await dbRun("BEGIN IMMEDIATE");
-  try {
-    // Limpieza de expirados
-    await dbRun(`DELETE FROM app_locks WHERE expires_at <= datetime('now')`);
+  // Limpieza de expirados
+  await dbRun(`DELETE FROM app_locks WHERE expires_at <= datetime('now')`);
 
-    // Intentar tomar lock si no existe
-    await dbRun(
-      `INSERT OR IGNORE INTO app_locks(name, acquired_at, expires_at, owner)
-       VALUES(?, datetime('now'), datetime('now', '+' || ? || ' seconds'), ?)`,
-      [name, ttlSeconds, owner]
-    );
+  // Intentar tomar lock si no existe
+  await dbRun(
+    `INSERT OR IGNORE INTO app_locks(name, acquired_at, expires_at, owner)
+     VALUES(?, datetime('now'), datetime('now', '+' || ? || ' seconds'), ?)`,
+    [name, ttlSeconds, owner]
+  );
 
-    // Si existía, intentar "robar" solo si estaba expirado (carrera segura bajo BEGIN IMMEDIATE)
-    const upd = await dbRun(
-      `UPDATE app_locks
-       SET acquired_at = datetime('now'),
-           expires_at = datetime('now', '+' || ? || ' seconds'),
-           owner = ?
-       WHERE name = ?
-         AND expires_at <= datetime('now')`,
-      [ttlSeconds, owner, name]
-    );
+  // Si existe, solo reemplazar dueño cuando ya expiró
+  await dbRun(
+    `UPDATE app_locks
+     SET acquired_at = datetime('now'),
+         expires_at = datetime('now', '+' || ? || ' seconds'),
+         owner = ?
+     WHERE name = ?
+       AND expires_at <= datetime('now')`,
+    [ttlSeconds, owner, name]
+  );
 
-    const row = await dbGet(`SELECT owner, expires_at FROM app_locks WHERE name = ?`, [name]);
-    const acquired = row && row.owner === owner;
-    if (!acquired && !(upd && upd.changes > 0)) {
-      await dbRun("ROLLBACK").catch(() => {});
-      return; // lock ocupado
-    }
-
-    await dbRun("COMMIT");
-  } catch (e) {
-    await dbRun("ROLLBACK").catch(() => {});
-    throw e;
-  }
+  const row = await dbGet(`SELECT owner FROM app_locks WHERE name = ?`, [name]);
+  const acquired = row && row.owner === owner;
+  if (!acquired) return; // lock ocupado
 
   try {
     return await fn();
   } finally {
     try {
-      await dbRun("BEGIN IMMEDIATE");
       await dbRun(`DELETE FROM app_locks WHERE name = ? AND owner = ?`, [name, owner]);
-      await dbRun("COMMIT");
-    } catch (_) {
-      await dbRun("ROLLBACK").catch(() => {});
-    }
+    } catch (_) {}
   }
 }
 
@@ -174,49 +159,51 @@ async function withDbLock({ name = LOCK_NAME, ttlMs = 60_000 }, fn) {
 async function syncCursosFinalizados() {
   return withDbLock({ name: LOCK_NAME, ttlMs: 60_000 }, async () => {
     try {
-      // Obtener todos los cursos no finalizados/cancelados
-      const cursos = await dbAll(
-        `SELECT id, estado, dias, nro_clases, horario_por_dia, fecha_inicio FROM cursos
-         WHERE estado NOT IN ('Finalizado', 'Cancelado')`
-      );
+      await db.runInTransaction(async () => {
+        // Obtener todos los cursos no finalizados/cancelados
+        const cursos = await dbAll(
+          `SELECT id, estado, dias, nro_clases, horario_por_dia, fecha_inicio FROM cursos
+           WHERE estado NOT IN ('Finalizado', 'Cancelado')`
+        );
 
-      for (const c of cursos) {
-        const fecha_inicio = parseFechaFromHorario(c.horario_por_dia, c.fecha_inicio);
-        const estadoCalc = calcularEstadoCurso({
-          fecha_inicio,
-          dias: c.dias,
-          nro_clases: c.nro_clases,
-          estado_bd: c.estado,
-        });
+        for (const c of cursos) {
+          const fecha_inicio = parseFechaFromHorario(c.horario_por_dia, c.fecha_inicio);
+          const estadoCalc = calcularEstadoCurso({
+            fecha_inicio,
+            dias: c.dias,
+            nro_clases: c.nro_clases,
+            estado_bd: c.estado,
+          });
 
-        if (estadoCalc === "Finalizado") {
-          // Actualizar estado del curso en BD
-          await dbRun(`UPDATE cursos SET estado = 'Finalizado' WHERE id = ?`, [c.id]);
-          // Finalizar inscripciones activas de este curso
-          await dbRun(
-            `UPDATE inscripciones SET estado = 'Finalizada' WHERE curso_id = ? AND estado = 'Activa'`,
-            [c.id]
-          );
-        } else if (estadoCalc === "En curso" && c.estado === "Programado") {
-          // Actualizar a "En curso" si ya inició
-          await dbRun(`UPDATE cursos SET estado = 'En curso' WHERE id = ?`, [c.id]);
+          if (estadoCalc === "Finalizado") {
+            // Actualizar estado del curso en BD
+            await dbRun(`UPDATE cursos SET estado = 'Finalizado' WHERE id = ?`, [c.id]);
+            // Finalizar inscripciones activas de este curso
+            await dbRun(
+              `UPDATE inscripciones SET estado = 'Finalizada' WHERE curso_id = ? AND estado = 'Activa'`,
+              [c.id]
+            );
+          } else if (estadoCalc === "En curso" && c.estado === "Programado") {
+            // Actualizar a "En curso" si ya inició
+            await dbRun(`UPDATE cursos SET estado = 'En curso' WHERE id = ?`, [c.id]);
+          }
         }
-      }
 
-      // Actualizar estado de instructores automáticamente:
-      // Activo = tiene al menos 1 curso en estado 'Programado' o 'En curso'
-      // Inactivo = no tiene cursos vigentes
-      await dbRun(`
-        UPDATE instructores
-        SET estado = CASE
-          WHEN EXISTS (
-            SELECT 1 FROM cursos c
-            WHERE c.instructor_id = instructores.id
-              AND c.estado IN ('Programado', 'En curso')
-          ) THEN 'Activo'
-          ELSE 'Inactivo'
-        END
-      `);
+        // Actualizar estado de instructores automáticamente:
+        // Activo = tiene al menos 1 curso en estado 'Programado' o 'En curso'
+        // Inactivo = no tiene cursos vigentes
+        await dbRun(`
+          UPDATE instructores
+          SET estado = CASE
+            WHEN EXISTS (
+              SELECT 1 FROM cursos c
+              WHERE c.instructor_id = instructores.id
+                AND c.estado IN ('Programado', 'En curso')
+            ) THEN 'Activo'
+            ELSE 'Inactivo'
+          END
+        `);
+      });
     } catch (err) {
       console.error("[syncCursosFinalizados] Error:", err);
     }

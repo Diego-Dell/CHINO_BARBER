@@ -374,8 +374,8 @@ router.get("/top-alumnos", async (req, res) => {
       WHERE a.fecha_vencimiento IS NOT NULL AND trim(a.fecha_vencimiento) != ''
         AND date(a.fecha_vencimiento) >= ${DATE_HOY_BO}
       GROUP BY a.id, a.nombre
-      HAVING pagado > 0
-      ORDER BY pagado DESC
+      HAVING pagado_centavos > 0
+      ORDER BY pagado_centavos DESC
       LIMIT 10
     `;
 

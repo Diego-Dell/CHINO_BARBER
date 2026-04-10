@@ -297,8 +297,7 @@ router.put("/:id/baja", async (req, res) => {
   if (motivo.length < 2) return res.status(400).json({ ok: false, error: "Motivo requerido" });
 
   try {
-    await dbRun("BEGIN IMMEDIATE");
-    try {
+    await db.runInTransaction(async () => {
       const before = await dbGet(
         `SELECT id, nombre, documento, fecha_vencimiento FROM alumnos WHERE id = ?`,
         [id]
@@ -325,11 +324,7 @@ router.put("/:id/baja", async (req, res) => {
       } catch (_) {
         await writeLog("alumno_baja", JSON.stringify({ alumno_id: id, motivo }), "admin");
       }
-      await dbRun("COMMIT");
-    } catch (e) {
-      await dbRun("ROLLBACK").catch(() => {});
-      throw e;
-    }
+    });
     return res.json({ ok: true });
   } catch (e) {
     console.error("[ALUMNOS][BAJA]", e);
