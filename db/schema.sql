@@ -36,14 +36,19 @@ CREATE TABLE IF NOT EXISTS alumnos (
   telefono TEXT,
   email TEXT,
   fecha_ingreso TEXT,
+  -- LEGADO (no usado por negocio): el estado real se calcula por fecha_vencimiento vs “hoy Bolivia”
+  -- Se conserva por compatibilidad con DBs existentes, pero no debe usarse como fuente de verdad.
   estado TEXT NOT NULL DEFAULT 'Activo' CHECK(estado IN ('Activo','Inactivo')),
+  -- Fuente de verdad de vigencia (YYYY-MM-DD): activo si fecha_vencimiento >= hoy(Bolivia UTC-4)
+  fecha_vencimiento TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_alumnos_documento ON alumnos(documento);
 CREATE INDEX IF NOT EXISTS ix_alumnos_nombre ON alumnos(nombre);
-CREATE INDEX IF NOT EXISTS ix_alumnos_estado ON alumnos(estado);
+-- Índice legado removido: no consultar por alumnos.estado en negocio
+-- CREATE INDEX IF NOT EXISTS ix_alumnos_estado ON alumnos(estado);
 
 -- =========================
 -- INSTRUCTORES
@@ -77,6 +82,8 @@ fecha_fin TEXT,
   nro_clases INTEGER NOT NULL DEFAULT 0 CHECK(nro_clases >= 0),
   dias TEXT,
   horario_por_dia TEXT,
+  -- Dinero: centavos como fuente de verdad (REAL se conserva por compatibilidad/UI legacy)
+  precio_centavos INTEGER,
   precio REAL NOT NULL DEFAULT 0 CHECK(precio >= 0),
   cupo INTEGER NOT NULL DEFAULT 0 CHECK(cupo >= 0),
   estado TEXT NOT NULL DEFAULT 'Programado'
@@ -110,11 +117,11 @@ CREATE TABLE IF NOT EXISTS inscripciones (
   FOREIGN KEY (alumno_id)
     REFERENCES alumnos(id)
     ON UPDATE CASCADE
-    ON DELETE CASCADE,
+    ON DELETE RESTRICT,
   FOREIGN KEY (curso_id)
     REFERENCES cursos(id)
     ON UPDATE CASCADE
-    ON DELETE CASCADE
+    ON DELETE RESTRICT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_insc_activa
@@ -156,33 +163,32 @@ CREATE TABLE IF NOT EXISTS pagos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   inscripcion_id INTEGER NOT NULL,
   fecha_pago TEXT NOT NULL DEFAULT (date('now')),
+  monto_centavos INTEGER,
   monto REAL NOT NULL CHECK(monto >= 0),
   cuota_nro INTEGER,
-  estado TEXT NOT NULL DEFAULT 'Pagado'
-    CHECK(estado IN ('Pagado','Pendiente','Anulado')),
+  estado TEXT NOT NULL DEFAULT 'activo'
+    CHECK(estado IN ('activo','anulado')),
+  cobro_estado TEXT NOT NULL DEFAULT 'Pagado'
+    CHECK(cobro_estado IN ('Pagado','Pendiente')),
   metodo TEXT NOT NULL DEFAULT 'Efectivo'
     CHECK(metodo IN ('Efectivo','Transferencia','QR','Tarjeta','Otro')),
   observaciones TEXT,
+  motivo_anulacion TEXT,
+  fecha_anulacion TEXT,
+  -- LEGADO: compat con DBs antiguas (no usar en flujo vigente)
   anulado_motivo TEXT,
   anulado_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (inscripcion_id) REFERENCES inscripciones(id)
-    ON UPDATE CASCADE ON DELETE CASCADE
+    ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
 
 CREATE INDEX IF NOT EXISTS ix_pagos_inscripcion ON pagos(inscripcion_id);
 DROP INDEX IF EXISTS ix_pagos_fecha;
 CREATE INDEX IF NOT EXISTS ix_pagos_fecha ON pagos(fecha_pago);
-
-CREATE INDEX IF NOT EXISTS ix_pagos_estado ON pagos(estado);
-CREATE INDEX IF NOT EXISTS ix_pagos_insc_fecha ON pagos(inscripcion_id, fecha_pago);
-CREATE INDEX IF NOT EXISTS ix_pagos_fecha_estado ON pagos(fecha_pago, estado);
-CREATE INDEX IF NOT EXISTS ix_pagos_insc_estado_fecha ON pagos(inscripcion_id, estado, fecha_pago);
-CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_insc_cuota_pagado
-ON pagos(inscripcion_id, cuota_nro)
-WHERE estado='Pagado' AND cuota_nro IS NOT NULL;
+-- Índices adicionales de pagos (estado/cobro_estado) los crea src/db.js tras migrar columnas.
 
 -- =========================
 -- EGRESOS
@@ -192,8 +198,12 @@ CREATE TABLE IF NOT EXISTS egresos (
   fecha TEXT NOT NULL DEFAULT (date('now')),
   categoria TEXT NOT NULL,
   detalle TEXT,
+  monto_centavos INTEGER,
   monto REAL NOT NULL CHECK(monto >= 0),
   comprobante TEXT,
+  estado TEXT NOT NULL DEFAULT 'activo' CHECK(estado IN ('activo','anulado')),
+  motivo_anulacion TEXT,
+  fecha_anulacion TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -210,6 +220,7 @@ CREATE TABLE IF NOT EXISTS inventario_items (
   categoria TEXT,
   unidad TEXT,
   stock_minimo INTEGER NOT NULL DEFAULT 0 CHECK(stock_minimo >= 0),
+  precio_minimo_centavos INTEGER,
   precio_minimo REAL NOT NULL DEFAULT 0 CHECK(precio_minimo >= 0),
   estado TEXT NOT NULL DEFAULT 'Activo'
     CHECK(estado IN ('Activo','Inactivo')),
@@ -230,6 +241,9 @@ CREATE TABLE IF NOT EXISTS inventario_movimientos (
   fecha TEXT NOT NULL DEFAULT (date('now')),
   tipo TEXT NOT NULL CHECK(tipo IN ('Ingreso','Salida','Ajuste','Prestamo','Devolucion','Venta')),
   cantidad INTEGER NOT NULL CHECK(cantidad <> 0),
+  costo_unitario_centavos INTEGER,
+  precio_unitario_centavos INTEGER,
+  precio_venta_centavos INTEGER,
   costo_unitario REAL NOT NULL DEFAULT 0 CHECK(costo_unitario >= 0),
   precio_unitario REAL NOT NULL DEFAULT 0 CHECK(precio_unitario >= 0),
   precio_venta REAL,
@@ -270,6 +284,7 @@ CREATE TABLE IF NOT EXISTS agenda_turnos (
   alumno_id INTEGER,
   instructor_id INTEGER,
   servicio TEXT,
+  precio_centavos INTEGER,
   precio REAL NOT NULL DEFAULT 0 CHECK(precio >= 0),
   estado TEXT NOT NULL DEFAULT 'Programado'
     CHECK(estado IN ('Programado','Confirmado','Atendido','Cancelado','No asistio')),

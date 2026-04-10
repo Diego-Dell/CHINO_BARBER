@@ -179,9 +179,10 @@ function createWindow(baseUrl) {
 app.whenReady().then(async () => {
   try {
     log.info("[MAIN] Iniciando servidor...");
-    const srv     = require("./services/server");
-    const port    = srv?.getPort?.() || Number(process.env.PORT) || 3000;
-    const baseUrl = `http://localhost:${port}`;
+    const srv = require("./services/server");
+    await srv.whenReady;
+    const port = srv.getPort?.() || Number(process.env.PORT) || 3000;
+    const baseUrl = `http://127.0.0.1:${port}`;
 
     await waitForHealth(baseUrl, 20000);
     log.info("[MAIN] Servidor OK →", baseUrl);

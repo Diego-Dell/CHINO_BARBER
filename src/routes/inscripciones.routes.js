@@ -2,6 +2,7 @@
 const express = require("express");
 const db = require("../db");
 const router = express.Router();
+const { boliviaTodayISO } = require("../lib/dates");
 
 // ===============================
 // SIN LOGIN / SIN SESIONES
@@ -61,10 +62,6 @@ function likeWrap(s) {
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
 
 // ✅ Tu sistema de cursos usa: Programado | En curso | Finalizado | Cancelado
 function cursoEsDisponible(estadoCurso) {
@@ -87,7 +84,7 @@ function normalizeEstadoInscripcion(v) {
 // ===============================
 async function getAlumno(alumno_id) {
   const a = await dbGet(
-    `SELECT id, nombre, documento, telefono, estado
+    `SELECT id, nombre, documento, telefono
      FROM alumnos
      WHERE id = ?`,
     [alumno_id]
@@ -334,7 +331,7 @@ router.post("/", adminOnly, async (req, res) => {
     const estado = normalizeEstadoInscripcion(req.body?.estado || "Activa");
 
     // si no manda fecha, la ponemos hoy
-    const fecha_inscripcion = normStr(req.body?.fecha_inscripcion) || todayISO();
+    const fecha_inscripcion = normStr(req.body?.fecha_inscripcion) || boliviaTodayISO();
 
     if (!alumno_id || !curso_id) {
       return res.status(400).json({ ok: false, error: "alumno_id y curso_id son obligatorios" });
@@ -388,7 +385,7 @@ router.put("/:id", adminOnly, async (req, res) => {
     if (!current) return res.status(404).json({ ok: false, error: "Inscripción no encontrada" });
 
     const newEstado = req.body?.estado !== undefined ? normalizeEstadoInscripcion(req.body.estado) : current.estado;
-    const newFecha = normStr(req.body?.fecha_inscripcion) || current.fecha_inscripcion || todayISO();
+    const newFecha = normStr(req.body?.fecha_inscripcion) || current.fecha_inscripcion || boliviaTodayISO();
     const bodyNroCuotas = req.body?.nro_cuotas;
     const newNroCuotas = bodyNroCuotas !== undefined && bodyNroCuotas !== null
       ? Math.max(1, toInt(bodyNroCuotas, 1))
@@ -419,22 +416,55 @@ router.put("/:id", adminOnly, async (req, res) => {
 });
 
 // ===============================
-// DELETE /api/inscripciones/:id  (baja lógica)
+// PUT /api/inscripciones/:id/cancelar  (baja lógica explícita)
 // ===============================
-router.delete("/:id", adminOnly, async (req, res) => {
+router.put("/:id/cancelar", adminOnly, async (req, res) => {
   try {
     const id = toInt(req.params.id, 0);
     if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
+    const motivo = normStr(req.body?.motivo);
+    if (!motivo || motivo.length < 2) {
+      return res.status(400).json({ ok: false, error: "Motivo requerido" });
+    }
 
-    const exists = await dbGet(`SELECT id FROM inscripciones WHERE id = ?`, [id]);
-    if (!exists) return res.status(404).json({ ok: false, error: "Inscripción no encontrada" });
+    const before = await dbGet(
+      `SELECT id, alumno_id, curso_id, estado, fecha_inscripcion, nro_cuotas FROM inscripciones WHERE id = ?`,
+      [id]
+    );
+    if (!before) return res.status(404).json({ ok: false, error: "Inscripción no encontrada" });
 
     await dbRun(`UPDATE inscripciones SET estado = 'Cancelada' WHERE id = ?`, [id]);
+    try {
+      const after = await dbGet(
+        `SELECT id, alumno_id, curso_id, estado, fecha_inscripcion, nro_cuotas FROM inscripciones WHERE id = ?`,
+        [id]
+      );
+      const { writeAudit } = require("../lib/auditLog");
+      await writeAudit({
+        accion: "inscripcion_cancelada",
+        entidad: "inscripcion",
+        entidad_id: id,
+        before,
+        after,
+        extra: { motivo },
+        actor: "admin",
+      });
+    } catch (_) {
+      try {
+        const { writeLog } = require("../lib/auditLog");
+        await writeLog("inscripcion_cancelada", JSON.stringify({ inscripcion_id: id, motivo }), "admin");
+      } catch (_) {}
+    }
     return res.json({ ok: true });
   } catch (err) {
-    console.error("[INSCRIPCIONES][DELETE]", err);
-    return res.status(500).json({ ok: false, error: "Error al inactivar inscripción" });
+    console.error("[INSCRIPCIONES][CANCELAR]", err);
+    return res.status(500).json({ ok: false, error: "Error al cancelar inscripción" });
   }
+});
+
+// DELETE queda deshabilitado: semántica de dominio usa PUT /:id/cancelar
+router.delete("/:id", adminOnly, async (_req, res) => {
+  return res.status(405).json({ ok: false, error: "Método no permitido. Usa PUT /api/inscripciones/:id/cancelar" });
 });
 
 module.exports = router;

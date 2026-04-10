@@ -75,7 +75,7 @@
         </div>
         <div class="act-right">
           <div style="font-size:13px;font-weight:700;color:#198754;">${bs(p.monto)}</div>
-          <div class="mt-1">${stBadge(p.estado)}</div>
+          <div class="mt-1">${stBadge(p.cobro_estado || p.estado)}</div>
         </div>
       </div>`).join("");
   }

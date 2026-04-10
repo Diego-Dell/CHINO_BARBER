@@ -313,6 +313,9 @@ html, body { max-width:100%; overflow-x:hidden; }
           <a href="pagos.html"    class="btn btn-primary btn-sm">💵 Registrar pago</a>
           <a href="alumnos.html"  class="btn btn-outline-primary btn-sm">👤 Nuevo alumno</a>
           <a href="reportes.html" class="btn btn-outline-secondary btn-sm">📈 Reportes</a>
+          <button type="button" id="btnBuscarActualizaciones" class="btn btn-outline-secondary btn-sm" title="Comparar versión local con GitHub">
+            🔍 Buscar actualizaciones
+          </button>
           <button onclick="dashboardInit()" class="btn btn-outline-secondary btn-sm" title="Actualizar">🔄</button>
         </div>
       </div>
@@ -498,17 +501,43 @@ function toggleSidebar() {
 // ─── CARGAR VERSIÓN ─────────────────────────────────────────────────────────────
 (async function loadVersion() {
   const versionEl = document.getElementById("versionNumber");
-  if (versionEl && window.appInfo?.getVersion) {
-    try {
-      const version = await window.appInfo.getVersion();
-      versionEl.textContent = version || "N/A";
-    } catch (e) {
-      versionEl.textContent = "N/A";
+  if (!versionEl) return;
+  try {
+    if (window.appInfo?.getVersion) {
+      versionEl.textContent = (await window.appInfo.getVersion()) || "N/A";
+      return;
     }
-  } else if (versionEl) {
-    versionEl.textContent = "1.2.2";
+    const r = await fetch("/api/app/version", { cache: "no-store" });
+    const j = r.ok ? await r.json() : null;
+    versionEl.textContent = (j && j.version) || "dev";
+  } catch (e) {
+    versionEl.textContent = "—";
   }
 })();
+
+document.getElementById("btnBuscarActualizaciones")?.addEventListener("click", async () => {
+  try {
+    const r = await fetch("/api/app/update-check", { cache: "no-store" });
+    const j = await r.json();
+    if (!j.ok && j.error) {
+      alert(j.error);
+      return;
+    }
+    if (j.updateAvailable) {
+      alert(
+        "Hay una nueva versión disponible: " +
+          (j.latestVersion || "") +
+          "\n\nVersión local: " +
+          (j.localVersion || "") +
+          (j.html_url ? "\n\n" + j.html_url : "")
+      );
+    } else {
+      alert("Estás en la versión actual (" + (j.localVersion || "") + ").");
+    }
+  } catch (e) {
+    alert("No se pudo verificar actualizaciones.");
+  }
+});
 </script>
 <script src="assets/vendor/bootstrap.bundle.min.js"></script>
 <script src="js/index.dashboard.js"></script>

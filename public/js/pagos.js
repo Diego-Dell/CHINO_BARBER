@@ -59,6 +59,8 @@
   let selectedAlumnoNombre = "";
 
   let prevNroCuotas = null;
+  /** Totales del curso/inscripción desde API (sin cálculo local de deuda). */
+  let lastResumenInscripcion = null;
 
 function resetCuotasState() {
   cuotasModelo = [];
@@ -189,7 +191,10 @@ function resetPagoModalState({ keepCurso = false, keepAlumno = false } = {}) {
     const p = new URLSearchParams();
     if (params.q) p.append("q", params.q);
     if (params.buscar) p.append("buscar", params.buscar);
-    if (params.estado) p.append("estado", params.estado);
+    if (params.estado) {
+      if (params.estado === "Anulado") p.append("vida", "anulado");
+      else p.append("cobro_estado", params.estado);
+    }
     if (params.mes) p.append("mes", params.mes);
 
     const qs = p.toString();
@@ -206,18 +211,18 @@ function resetPagoModalState({ keepCurso = false, keepAlumno = false } = {}) {
     });
   }
 
-  async function apiDeletePago(id) {
-    if (!id) throw new Error("ID inválido");
-    return fetchJSON(`/api/pagos/${encodeURIComponent(id)}`, { method: "DELETE" });
+  async function apiGetResumenInscripcion(inscripcion_id) {
+    if (!inscripcion_id) return null;
+    return fetchJSON(`/api/pagos/inscripcion/${encodeURIComponent(inscripcion_id)}/resumen`);
   }
 
   async function apiAnularPago(id, { motivo } = {}) {
     if (!id) throw new Error("ID inválido");
     const m = String(motivo || "").trim();
     return fetchJSON(`/api/pagos/${encodeURIComponent(id)}/anular`, {
-      method: "POST",
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(m ? { motivo: m } : {}),
+      body: JSON.stringify({ motivo: m }),
     });
   }
 
@@ -548,11 +553,6 @@ async function syncNroCuotasFromDB({ alumno_id, curso_id } = {}) {
     }
   }
 
-  function totalPagadoCursoActual() {
-    const rows = Array.from(pagosPorCuota?.values?.() || []);
-    return rows.reduce((acc, r) => acc + Number(r?.monto || 0), 0);
-  }
-
   function applyCursoPagadoUI({ totalPagado = 0, totalCurso = 0 } = {}) {
     const saldo = Math.max(0, Number(totalCurso || 0) - Number(totalPagado || 0));
     saldoCursoActual = saldo;
@@ -580,6 +580,7 @@ async function syncNroCuotasFromDB({ alumno_id, curso_id } = {}) {
 async function refreshPagosPorCuota() {
     pagosPorCuota = new Map();
     pagoSeleccionado = null;
+    lastResumenInscripcion = null;
     if (btnGuardarPago) btnGuardarPago.disabled = false;
 
     const doc = normStr(pgDocumento?.value);
@@ -598,16 +599,42 @@ async function refreshPagosPorCuota() {
     );
 
     const curso = getCursoSel();
-    const totalCurso = Number(curso?.precio || 0);
-    const totalPagado = filtrados
-      .filter(r => String(r.estado || '').toLowerCase() === 'pagado')
-      .reduce((acc, r) => acc + Number(r.monto || 0), 0);
+    const alumnoId = Number(selectedAlumnoId) || null;
+    const pagoCuenta = (r) =>
+      String(r.estado || "").toLowerCase() === "activo" &&
+      String(r.cobro_estado || "").toLowerCase() === "pagado";
+
+    try {
+      if (alumnoId && cursoId) {
+        const inscId = await apiFindInscripcionActiva(alumnoId, Number(cursoId));
+        if (inscId) {
+          lastResumenInscripcion = await apiGetResumenInscripcion(inscId);
+          if (lastResumenInscripcion && lastResumenInscripcion.ok) {
+            applyCursoPagadoUI({
+              totalPagado: Number(lastResumenInscripcion.pagado || 0),
+              totalCurso: Number(lastResumenInscripcion.precio || 0),
+            });
+          }
+        }
+      }
+    } catch (_) {
+      lastResumenInscripcion = null;
+    }
+
+    if (!lastResumenInscripcion || !lastResumenInscripcion.ok) {
+      // Regla: renderer NO recalcula finanzas. Si falla resumen backend, bloquea acciones dependientes.
+      if (btnGuardarPago) btnGuardarPago.disabled = true;
+      applyCursoPagadoUI({ totalPagado: 0, totalCurso: Number(curso?.precio || 0) });
+      alert("No se pudo calcular el resumen financiero desde el servidor. Reintenta; no se permite registrar pagos sin resumen.");
+      return;
+    }
 
     for (const r of filtrados) {
       const nro = Number.isFinite(Number(r.cuota_nro)) && Number(r.cuota_nro) >= 1
         ? Number(r.cuota_nro)
         : parseCuotaNroFromObs(r.observaciones);
       if (!nro) continue;
+      if (!pagoCuenta(r)) continue;
       const prev = pagosPorCuota.get(nro);
       if (!prev) {
         pagosPorCuota.set(nro, r);
@@ -617,8 +644,6 @@ async function refreshPagosPorCuota() {
         if (b > a) pagosPorCuota.set(nro, r);
       }
     }
-    applyCursoPagadoUI({ totalPagado, totalCurso });
-
   }
 
   // ================= CUOTAS =================
@@ -633,16 +658,24 @@ async function refreshPagosPorCuota() {
       return;
     }
 
-    const total = Number(curso.precio || 0);
     const n = Number(pgNroCuotas?.value || 1);
-    const montoCuota = n ? total / n : total;
+    const totalCentavos =
+      curso.precio_centavos != null
+        ? Number(curso.precio_centavos || 0)
+        : Math.trunc(Math.round(Number(curso.precio || 0) * 100));
+    const nn = Math.max(1, Math.trunc(n || 1));
 
-    cuotasModelo = Array.from({ length: n }, (_, i) => ({
-      nro: i + 1,
-      monto: Number(montoCuota.toFixed(2)),
-    }));
+    // Distribuir en centavos (sin floats) para evitar drift.
+    const base = Math.trunc(totalCentavos / nn);
+    const rem = Math.max(0, totalCentavos - base * nn);
 
-    cuotaFechas = computeDefaultCuotaFechas(curso, n);
+    cuotasModelo = Array.from({ length: nn }, (_, i) => {
+      const extra = i < rem ? 1 : 0;
+      const cuotaCent = base + extra;
+      return { nro: i + 1, monto: cuotaCent / 100 };
+    });
+
+    cuotaFechas = computeDefaultCuotaFechas(curso, nn);
     cuotaSeleccionada = null;
     pagoSeleccionado = null;
     renderCuotas();
@@ -650,11 +683,15 @@ async function refreshPagosPorCuota() {
 
   function renderCuotas() {
     const curso = getCursoSel();
-    const total = Number(curso?.precio || 0);
+    const totalCentavos =
+      curso?.precio_centavos != null
+        ? Number(curso.precio_centavos || 0)
+        : Math.trunc(Math.round(Number(curso?.precio || 0) * 100));
+    const total = totalCentavos / 100;
 
     if (pgTotalCurso) pgTotalCurso.textContent = bs(total);
     if (pgCursoInfo)
-      pgCursoInfo.textContent = curso ? `Precio: ${bs(curso.precio)} · Curso: ${curso.nombre}` : "—";
+      pgCursoInfo.textContent = curso ? `Precio: ${bs(total)} · Curso: ${curso.nombre}` : "—";
 
     if (!cuotasModelo.length) {
       if (pgCuotasList) pgCuotasList.innerHTML = `<div class="text-muted">No hay cuotas</div>`;
@@ -731,22 +768,15 @@ async function refreshPagosPorCuota() {
             }
           }
 
-          const pagado = cuota?.monto || 0;
-          if (pgTotalPagado) pgTotalPagado.textContent = bs(pagado);
-          if (pgSaldo) pgSaldo.textContent = bs(Math.max(0, total - pagado));
-
           renderCuotas();
         });
       });
     }
 
-    // Mostrar totales REALES (suma de todas las cuotas efectivamente pagadas),
-    // no solo el monto de la cuota seleccionada que sobreescribía los valores correctos.
-    const actualPagado = Array.from(pagosPorCuota.values())
-      .filter((p) => String(p.estado || "").toLowerCase() === "pagado")
-      .reduce((acc, p) => acc + Number(p.monto || 0), 0);
-    if (pgTotalPagado) pgTotalPagado.textContent = bs(actualPagado);
-    if (pgSaldo) pgSaldo.textContent = bs(Math.max(0, total - actualPagado));
+    if (lastResumenInscripcion && lastResumenInscripcion.ok) {
+      if (pgTotalPagado) pgTotalPagado.textContent = bs(lastResumenInscripcion.pagado);
+      if (pgSaldo) pgSaldo.textContent = bs(lastResumenInscripcion.saldo);
+    }
   }
 
   // ================= TABLA PAGOS =================
@@ -766,29 +796,42 @@ async function refreshPagosPorCuota() {
 
     tablaPagosBody.innerHTML = rows
       .map((r) => {
-        const estado = r.estado || "Pendiente";
+        const cobro = r.cobro_estado || "—";
+        const anulado = String(r.estado || "").toLowerCase() === "anulado";
         const badge =
-          estado === "Pagado" ? "bg-success" : estado === "Vencido" ? "bg-danger" : "bg-secondary";
+          cobro === "Pagado" ? "bg-success" : cobro === "Pendiente" ? "bg-warning text-dark" : "bg-secondary";
+        const rowCls = anulado ? "text-danger text-decoration-line-through opacity-75" : "";
+
+        const anulInfo = anulado
+          ? `<div class="small text-danger text-decoration-none opacity-100">
+               Motivo: ${esc(r.motivo_anulacion || "—")}<br/>
+               Fecha anulación: ${esc((r.fecha_anulacion || "").slice(0, 10) || "—")}
+             </div>`
+          : "";
 
         return `
-          <tr>
+          <tr class="${rowCls}">
             <td>${esc(r.id)}</td>
             <td>${esc((r.fecha || "").slice(0, 10) || "—")}</td>
             <td>${esc(r.alumno_nombre || "—")}</td>
             <td>${esc(r.alumno_documento || "—")}</td>
             <td>${esc(r.curso_nombre || "—")}</td>
             <td class="text-end">${bs(r.monto)}</td>
-            <td><span class="badge ${badge}">${esc(estado)}</span></td>
+            <td><span class="badge ${badge}">${esc(cobro)}${anulado ? " · anulado" : ""}</span></td>
             <td>${esc(r.metodo || "—")}</td>
-            <td class="text-muted small">${esc(r.observaciones || "—")}</td>
+            <td class="text-muted small">${esc(r.observaciones || "—")}${anulInfo}</td>
             <td class="text-end">
               <div class="btn-group btn-group-sm" role="group">
                 <button type="button" class="btn btn-outline-primary" data-print-id="${esc(r.id)}" title="Imprimir recibo">
                   🖨️
                 </button>
-                <button type="button" class="btn btn-outline-warning" data-anular-id="${esc(r.id)}" title="Anular">
+                ${
+                  anulado
+                    ? `<span class="small text-muted px-1">Anulado</span>`
+                    : `<button type="button" class="btn btn-outline-warning" data-anular-id="${esc(r.id)}" title="Anular">
                   🚫
-                </button>
+                </button>`
+                }
               </div>
             </td>
           </tr>
@@ -800,12 +843,19 @@ async function refreshPagosPorCuota() {
     tablaPagosBody.querySelectorAll("button[data-anular-id]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const id = btn.getAttribute("data-anular-id");
-        const ok = window.confirm(`¿Anular el pago #${id}? Esto mantendrá el registro para auditoría.`);
+        const ok = window.confirm(`¿Anular el pago #${id}? Se guardará el motivo y el registro quedará para auditoría.`);
         if (!ok) return;
+        const motivo = window.prompt("Motivo de anulación (obligatorio):", "");
+        if (motivo == null) return;
+        const m = String(motivo).trim();
+        if (m.length < 2) {
+          alert("Debes indicar un motivo (al menos 2 caracteres).");
+          return;
+        }
 
         try {
           btn.disabled = true;
-          await apiAnularPago(id, { motivo: "Anulado desde UI" });
+          await apiAnularPago(id, { motivo: m });
           await cargarPagos();
           await refreshPagosPorCuota();
           renderCuotas();
@@ -1268,7 +1318,7 @@ const inscripcion_id = await getInscripcionIdRequired(alumnoDb.id, Number(cursoI
         monto: cuota.monto,
         cuota_nro: cuota.nro,
         metodo: pgMetodo?.value || "Efectivo",
-        estado: "Pagado",
+        cobro_estado: "Pagado",
         observaciones: normStr(pgObs?.value) || `Cuota ${cuota.nro} - ${curso?.nombre || ""}`,
       });
 

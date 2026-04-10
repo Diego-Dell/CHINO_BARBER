@@ -1,8 +1,18 @@
 // src/routes/routes.js
 const express = require("express");
 const router = express.Router();
+const dbMod = require("../db");
 
 const { validateJsonBody } = require("../middleware/validator");
+
+router.use(async (req, res, next) => {
+  try {
+    if (dbMod.migrationPromise) await dbMod.migrationPromise;
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
 
 router.use((req, res, next) => {
   res.setHeader("Cache-Control", "no-store");

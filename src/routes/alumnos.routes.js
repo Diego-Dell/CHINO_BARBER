@@ -1,6 +1,8 @@
 const express = require("express");
 const db = require("../db"); // Debe exportar sqlite Database()
 const { syncCursosFinalizados } = require("../utils/syncEstados");
+const { sqlAlumnoEstado } = require("../lib/boliviaSql");
+const { writeLog, writeAudit } = require("../lib/auditLog");
 const router = express.Router();
 
 // ===============================
@@ -38,24 +40,13 @@ function likeWrap(q) {
 }
 
 /**
- * Estado AUTOMÁTICO:
- * Activo   = existe al menos 1 inscripción con estado='Activa'
- *            (considera que inscripciones finalizadas/canceladas = no activas)
- * Inactivo = si no tiene ninguna inscripción activa
+ * Estado SOLO desde backend: fecha_vencimiento vs hoy (Bolivia UTC-4).
  */
 const SELECT_ALUMNOS_WITH_ESTADO = `
   SELECT
     a.id, a.nombre, a.documento, a.telefono, a.email, a.fecha_ingreso,
-    CASE
-      WHEN EXISTS (
-        SELECT 1
-        FROM inscripciones i
-        WHERE i.alumno_id = a.id
-          AND i.estado = 'Activa'
-      )
-      THEN 'Activo'
-      ELSE 'Inactivo'
-    END AS estado,
+    a.fecha_vencimiento,
+    (${sqlAlumnoEstado}) AS estado,
     a.created_at, a.updated_at
   FROM alumnos a
 `;
@@ -195,11 +186,29 @@ router.post("/", async (req, res) => {
 
     const r = await dbRun(
       `
-      INSERT INTO alumnos (nombre, documento, telefono, email, fecha_ingreso, estado)
-      VALUES (?, ?, ?, ?, ?, 'Inactivo')
+      INSERT INTO alumnos (nombre, documento, telefono, email, fecha_ingreso, fecha_vencimiento)
+      VALUES (?, ?, ?, ?, ?, NULL)
       `,
       [nombre, documento, telefono || null, email || null, fecha_ingreso || null]
     );
+    try {
+      const after = await dbGet(
+        `SELECT id, nombre, documento, telefono, email, fecha_ingreso, fecha_vencimiento
+         FROM alumnos WHERE id = ?`,
+        [r.lastID]
+      );
+      await writeAudit({
+        accion: "alumno_creado",
+        entidad: "alumno",
+        entidad_id: r.lastID,
+        before: null,
+        after,
+        extra: { documento },
+        actor: "admin",
+      });
+    } catch (_) {
+      await writeLog("alumno_creado", JSON.stringify({ alumno_id: r.lastID, documento }), "admin");
+    }
 
     return res.status(201).json({ ok: true, data: { id: r.lastID } });
   } catch (e) {
@@ -235,6 +244,12 @@ router.put("/:id", async (req, res) => {
     const dup = await dbGet("SELECT id FROM alumnos WHERE documento = ? AND id != ?", [documento, id]);
     if (dup) return res.status(409).json({ ok: false, error: "El documento ya está registrado" });
 
+    const before = await dbGet(
+      `SELECT id, nombre, documento, telefono, email, fecha_ingreso, fecha_vencimiento
+       FROM alumnos WHERE id = ?`,
+      [id]
+    );
+
     await dbRun(
       `
       UPDATE alumnos
@@ -243,6 +258,23 @@ router.put("/:id", async (req, res) => {
       `,
       [nombre, documento, telefono || null, email || null, fecha_ingreso || null, id]
     );
+    try {
+      const after = await dbGet(
+        `SELECT id, nombre, documento, telefono, email, fecha_ingreso, fecha_vencimiento
+         FROM alumnos WHERE id = ?`,
+        [id]
+      );
+      await writeAudit({
+        accion: "alumno_actualizado",
+        entidad: "alumno",
+        entidad_id: id,
+        before,
+        after,
+        actor: "admin",
+      });
+    } catch (_) {
+      await writeLog("alumno_actualizado", JSON.stringify({ alumno_id: id }), "admin");
+    }
 
     return res.json({ ok: true });
   } catch (e) {
@@ -258,15 +290,41 @@ router.put("/:id", async (req, res) => {
 // - Marca alumno Inactivo en BD
 // (el estado visual igualmente se calcula por inscripciones)
 // =====================================
-router.delete("/:id", async (req, res) => {
+router.put("/:id/baja", async (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
+  const motivo = String(req.body?.motivo || "").trim();
+  if (motivo.length < 2) return res.status(400).json({ ok: false, error: "Motivo requerido" });
 
   try {
     await dbRun("BEGIN IMMEDIATE");
     try {
+      const before = await dbGet(
+        `SELECT id, nombre, documento, fecha_vencimiento FROM alumnos WHERE id = ?`,
+        [id]
+      );
       await dbRun(`UPDATE inscripciones SET estado = 'Cancelada' WHERE alumno_id = ? AND estado = 'Activa'`, [id]);
-      await dbRun(`UPDATE alumnos SET estado = 'Inactivo' WHERE id = ?`, [id]);
+      await dbRun(
+        `UPDATE alumnos SET fecha_vencimiento = date('now','-4 hours','-1 day') WHERE id = ?`,
+        [id]
+      );
+      try {
+        const after = await dbGet(
+          `SELECT id, nombre, documento, fecha_vencimiento FROM alumnos WHERE id = ?`,
+          [id]
+        );
+        await writeAudit({
+          accion: "alumno_baja",
+          entidad: "alumno",
+          entidad_id: id,
+          before,
+          after,
+          extra: { motivo },
+          actor: "admin",
+        });
+      } catch (_) {
+        await writeLog("alumno_baja", JSON.stringify({ alumno_id: id, motivo }), "admin");
+      }
       await dbRun("COMMIT");
     } catch (e) {
       await dbRun("ROLLBACK").catch(() => {});
@@ -274,9 +332,14 @@ router.delete("/:id", async (req, res) => {
     }
     return res.json({ ok: true });
   } catch (e) {
-    console.error("[ALUMNOS][DELETE]", e);
+    console.error("[ALUMNOS][BAJA]", e);
     return res.status(500).json({ ok: false, error: "Error al dar de baja al alumno" });
   }
+});
+
+// DELETE queda deshabilitado: semántica de dominio usa PUT /:id/baja
+router.delete("/:id", async (_req, res) => {
+  return res.status(405).json({ ok: false, error: "Método no permitido. Usa PUT /api/alumnos/:id/baja" });
 });
 
 module.exports = router;

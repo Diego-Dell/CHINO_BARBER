@@ -227,7 +227,7 @@
         fecha,
         monto,
         metodo,
-        estado: "Pagado",
+        cobro_estado: "Pagado",
         observaciones: obs,
       });
       if (pagoMsg) { pagoMsg.textContent = "✅ Pago registrado correctamente."; pagoMsg.className = "text-success"; }

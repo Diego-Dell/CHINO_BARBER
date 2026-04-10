@@ -3,6 +3,8 @@
 const express = require("express");
 const db = require("../db"); // sqlite3.Database()
 const router = express.Router();
+const { toCentavos, fromCentavos } = require("../lib/money");
+const { boliviaTodayISO, isISODate } = require("../lib/dates");
 
 // ===============================
 // Middlewares (locales)
@@ -71,29 +73,8 @@ function toNum(v, def = null) {
   return Number.isFinite(n) ? n : def;
 }
 
-function isISODate(s) {
-  if (typeof s !== "string") return false;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-  const [y, m, d] = s.split("-").map((x) => Number(x));
-  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return false;
-  const dt = new Date(`${s}T00:00:00Z`);
-  return (
-    dt.getUTCFullYear() === y &&
-    dt.getUTCMonth() + 1 === m &&
-    dt.getUTCDate() === d
-  );
-}
-
 function likeWrap(s) {
   return `%${String(s || "").trim()}%`;
-}
-
-function todayISO() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
 }
 
 // ===============================
@@ -140,6 +121,9 @@ router.get("/", async (req, res) => {
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
+    // Por defecto: solo activos (no borrado físico)
+    where.push("e.estado = 'activo'");
+
     const totalRow = await dbGet(
       `
       SELECT COUNT(*) AS total
@@ -153,7 +137,8 @@ router.get("/", async (req, res) => {
     const rows = await dbAll(
       `
       SELECT
-        e.id, e.fecha, e.categoria, e.detalle, e.monto, e.comprobante
+        e.id, e.fecha, e.categoria, e.detalle, e.monto, e.monto_centavos, e.comprobante,
+        e.estado, e.motivo_anulacion, e.fecha_anulacion
       FROM egresos e
       ${whereSql}
       ORDER BY e.fecha DESC, e.id DESC
@@ -177,7 +162,8 @@ router.get("/:id", async (req, res) => {
     if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
     const row = await dbGet(
-      `SELECT id, fecha, categoria, detalle, monto, comprobante
+      `SELECT id, fecha, categoria, detalle, monto, monto_centavos, comprobante,
+              estado, motivo_anulacion, fecha_anulacion
        FROM egresos
        WHERE id = ?`,
       [id]
@@ -195,11 +181,12 @@ router.get("/:id", async (req, res) => {
 // ===============================
 router.post("/", adminOnly, async (req, res) => {
   try {
-    const fecha = normStr(req.body?.fecha) || todayISO();
+    const fecha = normStr(req.body?.fecha) || boliviaTodayISO();
     const categoria = normStr(req.body?.categoria);
     const detalle = normStr(req.body?.detalle);
     const comprobante = normStr(req.body?.comprobante);
     const monto = toNum(req.body?.monto, null);
+    const monto_centavos = toCentavos(monto);
 
     if (!isISODate(fecha)) {
       return res.status(400).json({ ok: false, error: "fecha obligatoria e inválida (YYYY-MM-DD)" });
@@ -210,17 +197,21 @@ router.post("/", adminOnly, async (req, res) => {
     if (monto === null || !(monto > 0)) {
       return res.status(400).json({ ok: false, error: "monto es obligatorio y debe ser > 0" });
     }
+    if (monto_centavos === null || !(monto_centavos > 0)) {
+      return res.status(400).json({ ok: false, error: "monto inválido" });
+    }
 
     const r = await dbRun(
       `
-      INSERT INTO egresos (fecha, categoria, detalle, monto, comprobante)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO egresos (fecha, categoria, detalle, monto_centavos, monto, comprobante)
+      VALUES (?, ?, ?, ?, ?, ?)
       `,
-      [fecha, categoria, detalle, monto, comprobante]
+      [fecha, categoria, detalle, monto_centavos, fromCentavos(monto_centavos), comprobante]
     );
 
     const created = await dbGet(
-      `SELECT id, fecha, categoria, detalle, monto, comprobante
+      `SELECT id, fecha, categoria, detalle, monto, monto_centavos, comprobante,
+              estado, motivo_anulacion, fecha_anulacion
        FROM egresos
        WHERE id = ?`,
       [r.lastID]
@@ -241,18 +232,22 @@ router.put("/:id", adminOnly, async (req, res) => {
     if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
     const current = await dbGet(
-      `SELECT id, fecha, categoria, detalle, monto, comprobante
+      `SELECT id, fecha, categoria, detalle, monto, monto_centavos, comprobante, estado
        FROM egresos
        WHERE id = ?`,
       [id]
     );
     if (!current) return res.status(404).json({ ok: false, error: "Egreso no encontrado" });
+    if (String(current.estado || "") === "anulado") {
+      return res.status(409).json({ ok: false, error: "Egreso anulado no es editable" });
+    }
 
     const fecha = req.body?.fecha !== undefined ? normStr(req.body.fecha) : current.fecha;
     const categoria = req.body?.categoria !== undefined ? normStr(req.body.categoria) : current.categoria;
     const detalle = req.body?.detalle !== undefined ? normStr(req.body.detalle) : current.detalle;
     const comprobante = req.body?.comprobante !== undefined ? normStr(req.body.comprobante) : current.comprobante;
     const monto = req.body?.monto !== undefined ? toNum(req.body.monto, null) : Number(current.monto);
+    const monto_centavos = req.body?.monto !== undefined ? toCentavos(monto) : (toCentavos(current.monto) ?? null);
 
     if (!fecha || !isISODate(fecha)) {
       return res.status(400).json({ ok: false, error: "fecha inválida (YYYY-MM-DD)" });
@@ -263,18 +258,22 @@ router.put("/:id", adminOnly, async (req, res) => {
     if (monto === null || !(monto > 0)) {
       return res.status(400).json({ ok: false, error: "monto debe ser > 0" });
     }
+    if (monto_centavos === null || !(monto_centavos > 0)) {
+      return res.status(400).json({ ok: false, error: "monto inválido" });
+    }
 
     await dbRun(
       `
       UPDATE egresos
-      SET fecha = ?, categoria = ?, detalle = ?, monto = ?, comprobante = ?
+      SET fecha = ?, categoria = ?, detalle = ?, monto_centavos = ?, monto = ?, comprobante = ?
       WHERE id = ?
       `,
-      [fecha, categoria, detalle, monto, comprobante, id]
+      [fecha, categoria, detalle, monto_centavos, fromCentavos(monto_centavos), comprobante, id]
     );
 
     const updated = await dbGet(
-      `SELECT id, fecha, categoria, detalle, monto, comprobante
+      `SELECT id, fecha, categoria, detalle, monto, monto_centavos, comprobante,
+              estado, motivo_anulacion, fecha_anulacion
        FROM egresos
        WHERE id = ?`,
       [id]
@@ -290,17 +289,44 @@ router.put("/:id", adminOnly, async (req, res) => {
 // 5) DELETE /api/egresos/:id (Admin) - físico
 // ===============================
 router.delete("/:id", adminOnly, async (req, res) => {
+  return res.status(405).json({ ok: false, error: "Método no permitido. Usa PUT /api/egresos/:id/anular" });
+});
+
+// ===============================
+// 5b) PUT /api/egresos/:id/anular (Admin) - NO borrado físico
+// ===============================
+router.put("/:id/anular", adminOnly, async (req, res) => {
   try {
     const id = toInt(req.params.id, null);
     if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
-    const exists = await dbGet(`SELECT id FROM egresos WHERE id = ?`, [id]);
-    if (!exists) return res.status(404).json({ ok: false, error: "Egreso no encontrado" });
+    const motivo = normStr(req.body?.motivo);
+    if (!motivo || motivo.length < 2) {
+      return res.status(400).json({ ok: false, error: "Motivo requerido" });
+    }
 
-    await dbRun(`DELETE FROM egresos WHERE id = ?`, [id]);
-    return res.json({ ok: true });
+    const current = await dbGet(`SELECT id, estado FROM egresos WHERE id = ?`, [id]);
+    if (!current) return res.status(404).json({ ok: false, error: "Egreso no encontrado" });
+    if (String(current.estado || "") === "anulado") return res.json({ ok: true, changes: 0 });
+
+    await dbRun(
+      `UPDATE egresos
+       SET estado = 'anulado',
+           motivo_anulacion = ?,
+           fecha_anulacion = ?,
+           updated_at = datetime('now')
+       WHERE id = ?`,
+      [motivo, boliviaTodayISO(), id]
+    );
+
+    try {
+      const { writeLog } = require("../lib/auditLog");
+      await writeLog("egreso_anulado", JSON.stringify({ egreso_id: id, motivo }), "admin");
+    } catch (_) {}
+
+    return res.json({ ok: true, changes: 1 });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: "Error al eliminar egreso" });
+    return res.status(500).json({ ok: false, error: "Error al anular egreso" });
   }
 });
 
@@ -327,20 +353,22 @@ router.get("/resumen", async (req, res) => {
 
     const totalRow = await dbGet(
       `
-      SELECT COALESCE(SUM(monto), 0) AS total_egresos
+      SELECT COALESCE(SUM(COALESCE(monto_centavos, CAST(ROUND(monto * 100) AS INTEGER))), 0) AS total_centavos
       FROM egresos
       WHERE fecha BETWEEN ? AND ?
+        AND COALESCE(estado,'activo') = 'activo'
       `,
       [d, h]
     );
 
     const porCategoria = await dbAll(
       `
-      SELECT categoria, COALESCE(SUM(monto), 0) AS total
+      SELECT categoria, COALESCE(SUM(COALESCE(monto_centavos, CAST(ROUND(monto * 100) AS INTEGER))), 0) AS total_centavos
       FROM egresos
       WHERE fecha BETWEEN ? AND ?
+        AND COALESCE(estado,'activo') = 'activo'
       GROUP BY categoria
-      ORDER BY total DESC
+      ORDER BY total_centavos DESC
       `,
       [d, h]
     );
@@ -348,10 +376,10 @@ router.get("/resumen", async (req, res) => {
     return res.json({
       ok: true,
       data: {
-        total_egresos: Number(totalRow?.total_egresos || 0),
+        total_egresos: Number(totalRow?.total_centavos || 0) / 100,
         por_categoria: porCategoria.map((r) => ({
           categoria: r.categoria,
-          total: Number(r.total || 0),
+          total: Number(r.total_centavos || 0) / 100,
         })),
       },
     });

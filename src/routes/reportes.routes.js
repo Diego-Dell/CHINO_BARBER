@@ -1,6 +1,8 @@
 // src/routes/reportes.routes.js - VERSIÓN COMPLETA Y FUNCIONAL
 const express = require("express");
 const db = require("../db");
+const { sqlPagoIngreso } = require("../lib/pagosSql");
+const { DATE_HOY_BO } = require("../lib/boliviaSql");
 
 const router = express.Router();
 
@@ -19,15 +21,12 @@ function dbAll(sql, params = []) {
 
 function pad2(n) { return String(n).padStart(2, "0"); }
 
-// Detectar columna de fecha en pagos
-let PAGOS_DATE_COL = null;
 async function resolvePagosDateColumn() {
-  if (PAGOS_DATE_COL) return PAGOS_DATE_COL;
   const cols = await dbAll(`PRAGMA table_info(pagos)`);
   const names = new Set(cols.map(c => c && c.name).filter(Boolean));
   const candidates = ["fecha_pago", "fecha", "fecha_registro", "created_at"];
   for (const c of candidates) {
-    if (names.has(c)) return (PAGOS_DATE_COL = c);
+    if (names.has(c)) return c;
   }
   return null;
 }
@@ -85,9 +84,8 @@ function getDateRange(desde, hasta) {
  */
 router.get("/kpis", async (req, res) => {
   try {
-    const { desde, hasta, anulados } = req.query;
+    const { desde, hasta } = req.query;
     const range = getDateRange(desde, hasta);
-    const includeAnulados = anulados === "1";
     const dateCol = await resolvePagosDateColumn();
 
     if (!dateCol) {
@@ -105,27 +103,28 @@ router.get("/kpis", async (req, res) => {
       });
     }
 
-    // INGRESOS: pagos con estado "Pagado" en el rango
+    // INGRESOS: solo pagos que cuentan (no anulados a nivel registro)
     const pagosSql = `
-      SELECT COALESCE(SUM(monto), 0) AS total
+      SELECT COALESCE(SUM(COALESCE(monto_centavos, CAST(ROUND(monto * 100) AS INTEGER))), 0) AS total_centavos
       FROM pagos
       WHERE ${dateCol} >= ?
         AND ${dateCol} < ?
-        ${!includeAnulados ? "AND estado = 'Pagado'" : "AND estado IN ('Pagado', 'Pendiente', 'Anulado')"}
+        AND ${sqlPagoIngreso("pagos")}
     `;
     const ingresosRow = await dbGet(pagosSql, [range.desde, range.hasta]);
-    const ingresos = Number(ingresosRow?.total || 0);
+    const ingresos = Number(ingresosRow?.total_centavos || 0) / 100;
 
     // EGRESOS: tabla egresos si existe
     let egresos = 0;
     try {
       const egresosSql = `
-        SELECT COALESCE(SUM(monto), 0) AS total
+        SELECT COALESCE(SUM(COALESCE(monto_centavos, CAST(ROUND(monto * 100) AS INTEGER))), 0) AS total_centavos
         FROM egresos
         WHERE fecha >= ? AND fecha < ?
+          AND COALESCE(estado, 'activo') = 'activo'
       `;
       const egresosRow = await dbGet(egresosSql, [range.desde, range.hasta]);
-      egresos = Number(egresosRow?.total || 0);
+      egresos = Number(egresosRow?.total_centavos || 0) / 100;
     } catch (e) {
       // Tabla egresos no existe o error, dejar en 0
       egresos = 0;
@@ -134,11 +133,12 @@ router.get("/kpis", async (req, res) => {
     // UTILIDAD
     const utilidad = ingresos - egresos;
 
-    // ALUMNOS ACTIVOS
+    // ALUMNOS ACTIVOS (fecha_vencimiento >= hoy Bolivia UTC-4)
     const alumnosRow = await dbGet(`
-      SELECT COALESCE(COUNT(DISTINCT id), 0) AS cnt
+      SELECT COALESCE(COUNT(*), 0) AS cnt
       FROM alumnos
-      WHERE estado = 'Activo'
+      WHERE fecha_vencimiento IS NOT NULL AND trim(fecha_vencimiento) != ''
+        AND date(fecha_vencimiento) >= ${DATE_HOY_BO}
     `);
     const alumnos_activos = Number(alumnosRow?.cnt || 0);
 
@@ -174,9 +174,8 @@ router.get("/kpis", async (req, res) => {
  */
 router.get("/tendencia", async (req, res) => {
   try {
-    const { desde, hasta, anulados } = req.query;
+    const { desde, hasta } = req.query;
     const range = getDateRange(desde, hasta);
-    const includeAnulados = anulados === "1";
     const dateCol = await resolvePagosDateColumn();
 
     if (!dateCol) {
@@ -208,22 +207,22 @@ router.get("/tendencia", async (req, res) => {
 
       // Ingresos del mes
       const ingRow = await dbGet(
-        `SELECT COALESCE(SUM(monto), 0) AS total FROM pagos
+        `SELECT COALESCE(SUM(COALESCE(monto_centavos, CAST(ROUND(monto * 100) AS INTEGER))), 0) AS total_centavos FROM pagos
          WHERE ${dateCol} >= ? AND ${dateCol} < ?
-         ${!includeAnulados ? "AND estado = 'Pagado'" : "AND estado IN ('Pagado', 'Pendiente', 'Anulado')"}`,
+         AND ${sqlPagoIngreso("pagos")}`,
         [mesStart, nextMonth]
       );
-      const ingresos = Number(ingRow?.total || 0);
+      const ingresos = Number(ingRow?.total_centavos || 0) / 100;
 
       // Egresos del mes
       let egresos = 0;
       try {
         const egreRow = await dbGet(
-          `SELECT COALESCE(SUM(monto), 0) AS total FROM egresos
-           WHERE fecha >= ? AND fecha < ?`,
+          `SELECT COALESCE(SUM(COALESCE(monto_centavos, CAST(ROUND(monto * 100) AS INTEGER))), 0) AS total_centavos FROM egresos
+           WHERE fecha >= ? AND fecha < ? AND COALESCE(estado,'activo') = 'activo'`,
           [mesStart, nextMonth]
         );
-        egresos = Number(egreRow?.total || 0);
+        egresos = Number(egreRow?.total_centavos || 0) / 100;
       } catch (e) {
         egresos = 0;
       }
@@ -265,20 +264,34 @@ router.get("/pagos-por-estado", async (req, res) => {
     }
 
     const rows = await dbAll(
-      `SELECT estado, COALESCE(COUNT(*), 0) AS cantidad, COALESCE(SUM(monto), 0) AS monto
+      `SELECT cobro_estado AS estado,
+              COALESCE(COUNT(*), 0) AS cantidad,
+              COALESCE(SUM(COALESCE(monto_centavos, CAST(ROUND(monto * 100) AS INTEGER))), 0) AS monto_centavos
        FROM pagos
-       WHERE ${dateCol} >= ? AND ${dateCol} < ?
-       GROUP BY estado`,
+       WHERE ${dateCol} >= ? AND ${dateCol} < ? AND estado = 'activo'
+       GROUP BY cobro_estado`,
       [range.desde, range.hasta]
     );
 
     const map = {};
     for (const r of rows) {
-      map[r.estado] = { estado: r.estado, cantidad: r.cantidad, monto: Number(r.monto || 0) };
+      map[r.estado] = { estado: r.estado, cantidad: r.cantidad, monto: Number(r.monto_centavos || 0) / 100 };
     }
 
-    const estados = ["Pagado", "Pendiente", "Anulado"];
-    const result = estados.map(e => map[e] || { estado: e, cantidad: 0, monto: 0 });
+    const estados = ["Pagado", "Pendiente"];
+    const result = estados.map((e) => map[e] || { estado: e, cantidad: 0, monto: 0 });
+    const anul = await dbGet(
+      `SELECT COALESCE(COUNT(*),0) AS n,
+              COALESCE(SUM(COALESCE(monto_centavos, CAST(ROUND(monto * 100) AS INTEGER))), 0) AS m_centavos
+       FROM pagos
+       WHERE ${dateCol} >= ? AND ${dateCol} < ? AND estado = 'anulado'`,
+      [range.desde, range.hasta]
+    );
+    result.push({
+      estado: "Anulado",
+      cantidad: Number(anul?.n || 0),
+      monto: Number(anul?.m_centavos || 0) / 100,
+    });
 
     return res.json({ ok: true, pagos_por_estado: result });
   } catch (err) {
@@ -293,9 +306,8 @@ router.get("/pagos-por-estado", async (req, res) => {
  */
 router.get("/top-cursos", async (req, res) => {
   try {
-    const { desde, hasta, anulados } = req.query;
+    const { desde, hasta } = req.query;
     const range = getDateRange(desde, hasta);
-    const includeAnulados = anulados === "1";
     const dateCol = await resolvePagosDateColumn();
 
     if (!dateCol) {
@@ -305,16 +317,16 @@ router.get("/top-cursos", async (req, res) => {
     const sql = `
       SELECT 
         c.id, c.nombre AS curso,
-        COALESCE(SUM(p.monto), 0) AS ingresos,
+        COALESCE(SUM(COALESCE(p.monto_centavos, CAST(ROUND(p.monto * 100) AS INTEGER))), 0) AS ingresos_centavos,
         COALESCE(COUNT(p.id), 0) AS num_pagos
       FROM cursos c
       LEFT JOIN inscripciones i ON c.id = i.curso_id
       LEFT JOIN pagos p ON i.id = p.inscripcion_id
         AND p.${dateCol} >= ?
         AND p.${dateCol} < ?
-        ${!includeAnulados ? "AND p.estado = 'Pagado'" : ""}
+        AND ${sqlPagoIngreso("p")}
       GROUP BY c.id, c.nombre
-      ORDER BY ingresos DESC
+      ORDER BY ingresos_centavos DESC
       LIMIT 10
     `;
 
@@ -324,7 +336,7 @@ router.get("/top-cursos", async (req, res) => {
       cursos: cursos.map(r => ({
         id: r.id,
         curso: r.curso,
-        ingresos: Number(r.ingresos || 0),
+        ingresos: Number(r.ingresos_centavos || 0) / 100,
         num_pagos: r.num_pagos,
       })),
     });
@@ -340,9 +352,8 @@ router.get("/top-cursos", async (req, res) => {
  */
 router.get("/top-alumnos", async (req, res) => {
   try {
-    const { desde, hasta, anulados } = req.query;
+    const { desde, hasta } = req.query;
     const range = getDateRange(desde, hasta);
-    const includeAnulados = anulados === "1";
     const dateCol = await resolvePagosDateColumn();
 
     if (!dateCol) {
@@ -352,15 +363,16 @@ router.get("/top-alumnos", async (req, res) => {
     const sql = `
       SELECT 
         a.id, a.nombre AS alumno,
-        COALESCE(SUM(p.monto), 0) AS pagado,
+        COALESCE(SUM(COALESCE(p.monto_centavos, CAST(ROUND(p.monto * 100) AS INTEGER))), 0) AS pagado_centavos,
         COALESCE(COUNT(p.id), 0) AS num_pagos
       FROM alumnos a
       LEFT JOIN inscripciones i ON a.id = i.alumno_id
       LEFT JOIN pagos p ON i.id = p.inscripcion_id
         AND p.${dateCol} >= ?
         AND p.${dateCol} < ?
-        ${!includeAnulados ? "AND p.estado = 'Pagado'" : ""}
-      WHERE a.estado = 'Activo'
+        AND ${sqlPagoIngreso("p")}
+      WHERE a.fecha_vencimiento IS NOT NULL AND trim(a.fecha_vencimiento) != ''
+        AND date(a.fecha_vencimiento) >= ${DATE_HOY_BO}
       GROUP BY a.id, a.nombre
       HAVING pagado > 0
       ORDER BY pagado DESC
@@ -373,7 +385,7 @@ router.get("/top-alumnos", async (req, res) => {
       alumnos: alumnos.map(r => ({
         id: r.id,
         alumno: r.alumno,
-        pagado: Number(r.pagado || 0),
+        pagado: Number(r.pagado_centavos || 0) / 100,
         num_pagos: r.num_pagos,
       })),
     });
@@ -401,7 +413,7 @@ router.get("/curso/:cursoId/detalle", async (req, res) => {
     const sql = `
       SELECT 
         p.id, p.${dateCol} AS fecha, a.nombre AS alumno, a.documento AS ci,
-        p.monto, p.estado, p.metodo, p.observaciones
+        p.monto, p.estado AS vida, p.cobro_estado AS estado_cobro, p.metodo, p.observaciones, p.motivo_anulacion
       FROM pagos p
       JOIN inscripciones i ON p.inscripcion_id = i.id
       JOIN alumnos a ON i.alumno_id = a.id
@@ -439,13 +451,13 @@ router.get("/dashboard", async (req, res) => {
 
     const countRow = await dbGet(
       `SELECT COALESCE(COUNT(*), 0) AS cnt FROM pagos
-       WHERE ${dateCol} >= ? AND ${dateCol} < ? AND estado = 'Pagado'`,
+       WHERE ${dateCol} >= ? AND ${dateCol} < ? AND ${sqlPagoIngreso("pagos")}`,
       [desde, hasta]
     );
 
     const totalRow = await dbGet(
-      `SELECT COALESCE(SUM(monto), 0) AS total FROM pagos
-       WHERE ${dateCol} >= ? AND ${dateCol} < ? AND estado = 'Pagado'`,
+      `SELECT COALESCE(SUM(COALESCE(monto_centavos, CAST(ROUND(monto * 100) AS INTEGER))), 0) AS total_centavos FROM pagos
+       WHERE ${dateCol} >= ? AND ${dateCol} < ? AND ${sqlPagoIngreso("pagos")}`,
       [desde, hasta]
     );
 
@@ -453,7 +465,7 @@ router.get("/dashboard", async (req, res) => {
       ok: true,
       data: {
         pagos_mes: Number(countRow?.cnt || 0),
-        monto_pagos_mes: Number(totalRow?.total || 0),
+        monto_pagos_mes: Number(totalRow?.total_centavos || 0) / 100,
       },
     });
   } catch (err) {
@@ -486,7 +498,13 @@ router.get("/deudores", async (req, res) => {
         c.id AS curso_id,
         c.nombre AS curso_nombre,
         ? AS mes,
-        COALESCE(c.precio, 0) - COALESCE(SUM(CASE WHEN p.estado = 'Pagado' THEN p.monto ELSE 0 END), 0) AS monto_adeudado
+        (
+          COALESCE(c.precio_centavos, CAST(ROUND(COALESCE(c.precio, 0) * 100) AS INTEGER))
+          - COALESCE(SUM(CASE WHEN ${sqlPagoIngreso("p")}
+              THEN COALESCE(p.monto_centavos, CAST(ROUND(p.monto * 100) AS INTEGER))
+              ELSE 0 END
+            ), 0)
+        ) / 100.0 AS monto_adeudado
       FROM inscripciones i
       INNER JOIN alumnos a ON i.alumno_id = a.id
       INNER JOIN cursos c ON i.curso_id = c.id
@@ -547,28 +565,39 @@ router.get("/dashboard-v2", async (req, res) => {
     let ingresos_mes_total = 0, ingresos_mes_count = 0, ingresos_mes_anterior = 0;
     if (dateCol) {
       const rowActual = await dbGet(
-        `SELECT COALESCE(SUM(monto),0) AS total, COALESCE(COUNT(*),0) AS cnt
-         FROM pagos WHERE ${dateCol} >= ? AND ${dateCol} < ? AND estado='Pagado'`,
+        `SELECT COALESCE(SUM(COALESCE(monto_centavos, CAST(ROUND(monto * 100) AS INTEGER))), 0) AS total_centavos,
+                COALESCE(COUNT(*),0) AS cnt
+         FROM pagos WHERE ${dateCol} >= ? AND ${dateCol} < ? AND ${sqlPagoIngreso("pagos")}`,
         [mesActualStart, mesActualEnd]
       );
-      ingresos_mes_total = Number(rowActual?.total || 0);
+      ingresos_mes_total = Number(rowActual?.total_centavos || 0) / 100;
       ingresos_mes_count = Number(rowActual?.cnt   || 0);
 
       const rowAnterior = await dbGet(
-        `SELECT COALESCE(SUM(monto),0) AS total FROM pagos
-         WHERE ${dateCol} >= ? AND ${dateCol} < ? AND estado='Pagado'`,
+        `SELECT COALESCE(SUM(COALESCE(monto_centavos, CAST(ROUND(monto * 100) AS INTEGER))), 0) AS total_centavos FROM pagos
+         WHERE ${dateCol} >= ? AND ${dateCol} < ? AND ${sqlPagoIngreso("pagos")}`,
         [mesAnteriorStart, mesAnteriorEnd]
       );
-      ingresos_mes_anterior = Number(rowAnterior?.total || 0);
+      ingresos_mes_anterior = Number(rowAnterior?.total_centavos || 0) / 100;
     }
     const variacion_pct = ingresos_mes_anterior > 0
       ? ((ingresos_mes_total - ingresos_mes_anterior) / ingresos_mes_anterior * 100)
       : null;
 
-    // ── 2. ALUMNOS ──
-    const alumnosRow = await dbAll(`SELECT estado FROM alumnos`).catch(() => []);
-    const alumnos_activos   = alumnosRow.filter(a => String(a.estado||"").trim() === "Activo").length;
-    const alumnos_inactivos = alumnosRow.filter(a => String(a.estado||"").trim() !== "Activo").length;
+    // ── 2. ALUMNOS (fecha_vencimiento vs hoy Bolivia; sin cache en memoria) ──
+    let alumnos_activos = 0, alumnos_inactivos = 0, alumnos_total = 0;
+    try {
+      const cntRow = await dbGet(`
+        SELECT
+          COUNT(*) AS total,
+          COALESCE(SUM(CASE WHEN fecha_vencimiento IS NOT NULL AND trim(fecha_vencimiento) != ''
+            AND date(fecha_vencimiento) >= ${DATE_HOY_BO} THEN 1 ELSE 0 END), 0) AS activos
+        FROM alumnos
+      `);
+      alumnos_total = Number(cntRow?.total || 0);
+      alumnos_activos = Number(cntRow?.activos || 0);
+      alumnos_inactivos = Math.max(0, alumnos_total - alumnos_activos);
+    } catch (_) {}
 
     // Nuevos alumnos del mes (usando created_at)
     let nuevos_mes = 0;
@@ -621,13 +650,13 @@ router.get("/dashboard-v2", async (req, res) => {
     if (dateCol) {
       try {
         ultimos_pagos = await dbAll(
-          `SELECT p.id, p.monto, p.estado, p.metodo, p.${dateCol} AS fecha,
+          `SELECT p.id, p.monto, p.cobro_estado, p.estado AS estado_vida, p.metodo, p.${dateCol} AS fecha,
              a.nombre AS alumno_nombre, c.nombre AS curso_nombre
            FROM pagos p
            LEFT JOIN inscripciones i ON i.id = p.inscripcion_id
            LEFT JOIN alumnos a ON a.id = i.alumno_id
            LEFT JOIN cursos c ON c.id = i.curso_id
-           WHERE p.estado = 'Pagado'
+           WHERE ${sqlPagoIngreso("p")}
            ORDER BY p.${dateCol} DESC, p.id DESC LIMIT 7`
         );
       } catch (_) {}
@@ -669,7 +698,7 @@ router.get("/dashboard-v2", async (req, res) => {
           variacion_pct: variacion_pct !== null ? Math.round(variacion_pct * 10) / 10 : null,
         },
         alumnos: {
-          total: alumnos_activos + alumnos_inactivos,
+          total: alumnos_total,
           activos: alumnos_activos,
           inactivos: alumnos_inactivos,
           nuevos_mes,

@@ -78,12 +78,122 @@ async function ensureIndex(indexName, createSql) {
   }
 }
 
+/**
+ * Legado: columna estado = Pagado/Pendiente/Anulado -> cobro_estado.
+ * Nuevo estado = 'activo'|'anulado' (ciclo de vida financiero).
+ */
+async function migratePagosEstadoCobro() {
+  if (!(await tableExists("pagos"))) return;
+
+  const cols = await dbAll("PRAGMA table_info(pagos);");
+  const names = new Set(cols.map((c) => String(c.name || "").toLowerCase()));
+  const hasCobro = names.has("cobro_estado");
+  const hasEstado = names.has("estado");
+
+  const legacyRow = await dbGet(
+    `SELECT id FROM pagos WHERE estado IN ('Pagado','Pendiente','Anulado') LIMIT 1`
+  );
+
+  if (!legacyRow && hasCobro && hasEstado) {
+    await ensureColumn("pagos", "motivo_anulacion", "TEXT");
+    await dbRun(
+      `UPDATE pagos SET motivo_anulacion = anulado_motivo WHERE motivo_anulacion IS NULL AND anulado_motivo IS NOT NULL`
+    );
+    await dbRun("DROP INDEX IF EXISTS ux_pagos_insc_cuota_pagado;");
+    await dbRun(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_insc_cuota_pagado
+      ON pagos(inscripcion_id, cuota_nro)
+      WHERE estado = 'activo' AND cobro_estado = 'Pagado' AND cuota_nro IS NOT NULL
+    `);
+    return;
+  }
+
+  await dbRun("DROP INDEX IF EXISTS ux_pagos_insc_cuota_pagado;");
+  await dbRun("DROP INDEX IF EXISTS ix_pagos_estado;");
+  await dbRun("DROP INDEX IF EXISTS ix_pagos_fecha_estado;");
+  await dbRun("DROP INDEX IF EXISTS ix_pagos_insc_estado_fecha;");
+
+  if (!hasCobro && hasEstado) {
+    try {
+      await dbRun("ALTER TABLE pagos RENAME COLUMN estado TO cobro_estado;");
+      console.log("[DB] pagos: renombrado estado -> cobro_estado");
+    } catch (e) {
+      console.warn("[DB] RENAME estado->cobro_estado:", e.message);
+      await ensureColumn("pagos", "cobro_estado", "TEXT");
+      await dbRun(
+        `UPDATE pagos SET cobro_estado = estado WHERE cobro_estado IS NULL OR trim(COALESCE(cobro_estado,'')) = ''`
+      );
+      try {
+        await dbRun("ALTER TABLE pagos DROP COLUMN estado;");
+      } catch (e2) {
+        console.error("[DB] No se pudo DROP COLUMN estado:", e2.message);
+        throw e2;
+      }
+    }
+  }
+
+  await ensureColumn("pagos", "estado", "TEXT NOT NULL DEFAULT 'activo'");
+  await ensureColumn("pagos", "motivo_anulacion", "TEXT");
+
+  try {
+    await dbRun(`UPDATE pagos SET registro_estado = 'anulado'
+      WHERE (cobro_estado = 'Anulado' OR anulado_at IS NOT NULL OR (anulado_motivo IS NOT NULL AND trim(anulado_motivo) != ''))
+        AND COALESCE(registro_estado,'activo') = 'activo'`);
+  } catch (_) {}
+
+  await dbRun(`
+    UPDATE pagos SET estado = 'anulado'
+    WHERE cobro_estado = 'Anulado'
+       OR IFNULL(registro_estado,'') = 'anulado'
+  `);
+  // Legacy: antes se reescribía cobro_estado='Pagado' al anular.
+  // Regla vigente: NO mutar cobro_estado al anular; solo usar estado='anulado' como ciclo de vida.
+  await dbRun(
+    `UPDATE pagos SET motivo_anulacion = anulado_motivo WHERE motivo_anulacion IS NULL AND anulado_motivo IS NOT NULL`
+  );
+  // Backfill: si hay legacy anulado_at, derivar fecha_anulacion si falta
+  await dbRun(`
+    UPDATE pagos SET fecha_anulacion = COALESCE(fecha_anulacion, date(substr(anulado_at,1,10)))
+    WHERE estado = 'anulado' AND anulado_at IS NOT NULL
+      AND (fecha_anulacion IS NULL OR trim(fecha_anulacion) = '')
+  `);
+  await dbRun(
+    `UPDATE pagos SET monto_centavos = CAST(ROUND(monto * 100) AS INTEGER) WHERE monto_centavos IS NULL`
+  );
+
+  await dbRun(`
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_insc_cuota_pagado
+    ON pagos(inscripcion_id, cuota_nro)
+    WHERE estado = 'activo' AND cobro_estado = 'Pagado' AND cuota_nro IS NOT NULL
+  `);
+  console.log("[DB] pagos: migración estado/cobro_estado aplicada");
+}
+
 async function runMigrations() {
   try {
     console.log("[DB] Ejecutando migraciones...");
 
     // ==== PASO 1: DESACTIVAR FK para poder reparar sin interferencias ====
     await dbRun("PRAGMA foreign_keys = OFF;");
+
+    // ==== BOOTSTRAP (DB nueva): aplicar schema.sql antes de ensureColumn ====
+    // Si la DB está vacía, muchas migraciones asumen tablas base existentes.
+    try {
+      const hasCursos = await tableExists("cursos");
+      const hasAlumnos = await tableExists("alumnos");
+      if (!hasCursos && !hasAlumnos) {
+        const schemaPath0 = findSchemaPath();
+        if (schemaPath0) {
+          const schema0 = fs.readFileSync(schemaPath0, "utf8");
+          await new Promise((resolve, reject) => {
+            db.exec(schema0, (err) => (err ? reject(err) : resolve()));
+          });
+          console.log("[DB] bootstrap schema aplicado:", schemaPath0);
+        }
+      }
+    } catch (e) {
+      console.warn("[DB] bootstrap schema warn:", e.message);
+    }
 
     // ==== PASO 2: LIMPIAR TRIGGERS HUERFANOS ====
     // Cuando una migracion anterior hizo RENAME TABLE inventario_movimientos -> _old
@@ -185,12 +295,109 @@ async function runMigrations() {
     // ==== PASO 5: MIGRACIONES DE COMPATIBILIDAD DE COLUMNAS ====
     await ensureColumn("cursos", "fecha_inicio", "TEXT");
     await ensureColumn("cursos", "fecha_fin", "TEXT");
+    // Dinero: centavos como fuente de verdad (se conserva REAL legacy por compatibilidad)
+    await ensureColumn("cursos", "precio_centavos", "INTEGER");
     // Plan de cuotas por inscripción (alumno+curso)
     await ensureColumn("inscripciones", "nro_cuotas", "INTEGER NOT NULL DEFAULT 1 CHECK(nro_cuotas >= 1)");
     // Cuotas y auditoría de anulación en pagos
     await ensureColumn("pagos", "cuota_nro", "INTEGER");
     await ensureColumn("pagos", "anulado_motivo", "TEXT");
     await ensureColumn("pagos", "anulado_at", "TEXT");
+    await ensureColumn("pagos", "registro_estado", "TEXT NOT NULL DEFAULT 'activo'");
+    await ensureColumn("pagos", "fecha_anulacion", "TEXT");
+    await ensureColumn("pagos", "monto_centavos", "INTEGER");
+    await ensureColumn("alumnos", "fecha_vencimiento", "TEXT");
+    await ensureColumn("egresos", "monto_centavos", "INTEGER");
+    await ensureColumn("egresos", "estado", "TEXT NOT NULL DEFAULT 'activo'");
+    await ensureColumn("egresos", "motivo_anulacion", "TEXT");
+    await ensureColumn("egresos", "fecha_anulacion", "TEXT");
+    await ensureColumn("inventario_items", "precio_minimo_centavos", "INTEGER");
+    await ensureColumn("inventario_movimientos", "costo_unitario_centavos", "INTEGER");
+    await ensureColumn("inventario_movimientos", "precio_unitario_centavos", "INTEGER");
+    await ensureColumn("inventario_movimientos", "precio_venta_centavos", "INTEGER");
+    await ensureColumn("agenda_turnos", "precio_centavos", "INTEGER");
+
+    try {
+      await dbRun(`UPDATE pagos SET registro_estado = 'anulado'
+        WHERE (estado = 'Anulado' OR anulado_at IS NOT NULL OR anulado_motivo IS NOT NULL)
+          AND COALESCE(registro_estado,'activo') = 'activo'`);
+      await dbRun(`UPDATE pagos SET registro_estado = 'activo' WHERE registro_estado IS NULL`);
+      await dbRun(`UPDATE pagos SET fecha_anulacion = anulado_at WHERE fecha_anulacion IS NULL AND anulado_at IS NOT NULL`);
+    } catch (e) {
+      console.warn("[DB] backfill pagos.registro_estado:", e.message);
+    }
+
+    // ==== BACKFILL CENTAVOS (dinero) ====
+    try {
+      await dbRun(`UPDATE cursos SET precio_centavos = CAST(ROUND(precio * 100) AS INTEGER) WHERE precio_centavos IS NULL`);
+    } catch (e) { console.warn("[DB] backfill cursos.precio_centavos:", e.message); }
+    try {
+      await dbRun(`UPDATE egresos SET monto_centavos = CAST(ROUND(monto * 100) AS INTEGER) WHERE monto_centavos IS NULL`);
+    } catch (e) { console.warn("[DB] backfill egresos.monto_centavos:", e.message); }
+    try {
+      await dbRun(`UPDATE inventario_items SET precio_minimo_centavos = CAST(ROUND(precio_minimo * 100) AS INTEGER) WHERE precio_minimo_centavos IS NULL`);
+    } catch (e) { console.warn("[DB] backfill inventario_items.precio_minimo_centavos:", e.message); }
+    try {
+      await dbRun(`UPDATE inventario_movimientos SET costo_unitario_centavos = CAST(ROUND(costo_unitario * 100) AS INTEGER) WHERE costo_unitario_centavos IS NULL`);
+      await dbRun(`UPDATE inventario_movimientos SET precio_unitario_centavos = CAST(ROUND(precio_unitario * 100) AS INTEGER) WHERE precio_unitario_centavos IS NULL`);
+      await dbRun(`UPDATE inventario_movimientos SET precio_venta_centavos = CAST(ROUND(precio_venta * 100) AS INTEGER) WHERE precio_venta_centavos IS NULL AND precio_venta IS NOT NULL`);
+    } catch (e) { console.warn("[DB] backfill inventario_movimientos.*_centavos:", e.message); }
+    try {
+      await dbRun(`UPDATE agenda_turnos SET precio_centavos = CAST(ROUND(precio * 100) AS INTEGER) WHERE precio_centavos IS NULL`);
+    } catch (e) { console.warn("[DB] backfill agenda_turnos.precio_centavos:", e.message); }
+
+    try {
+      await dbRun(`
+        UPDATE alumnos SET fecha_vencimiento = (
+          SELECT strftime('%Y-%m-%d', MAX(
+            COALESCE(
+              NULLIF(trim(c.fecha_fin), ''),
+              NULLIF(trim(c.fecha_inicio), ''),
+              date('now')
+            )
+          ))
+          FROM inscripciones i
+          JOIN cursos c ON c.id = i.curso_id
+          WHERE i.alumno_id = alumnos.id AND i.estado = 'Activa'
+        )
+        WHERE (fecha_vencimiento IS NULL OR trim(fecha_vencimiento) = '')
+          AND EXISTS (SELECT 1 FROM inscripciones i2 WHERE i2.alumno_id = alumnos.id AND i2.estado = 'Activa')
+      `);
+      await dbRun(`
+        UPDATE alumnos SET fecha_vencimiento = date(COALESCE(fecha_ingreso, substr(created_at,1,10), date('now')), '+365 days')
+        WHERE fecha_vencimiento IS NULL OR trim(fecha_vencimiento) = ''
+      `);
+    } catch (e) {
+      console.warn("[DB] backfill alumnos.fecha_vencimiento:", e.message);
+    }
+
+    try {
+      await dbExec(`CREATE TABLE IF NOT EXISTS logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        accion TEXT NOT NULL,
+        fecha TEXT NOT NULL DEFAULT (datetime('now')),
+        detalle TEXT,
+        actor TEXT NOT NULL DEFAULT 'admin',
+        usuario TEXT NOT NULL DEFAULT 'admin'
+      );`);
+      await dbRun("CREATE INDEX IF NOT EXISTS ix_logs_fecha ON logs(fecha);");
+    } catch (e) {
+      console.warn("[DB] logs:", e.message);
+    }
+    await ensureColumn("logs", "usuario", "TEXT NOT NULL DEFAULT 'admin'");
+
+    // Locks persistentes (evita locks en memoria para jobs críticos)
+    try {
+      await dbExec(`CREATE TABLE IF NOT EXISTS app_locks (
+        name TEXT PRIMARY KEY,
+        acquired_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL,
+        owner TEXT NOT NULL
+      );`);
+      await dbRun("CREATE INDEX IF NOT EXISTS ix_app_locks_expires ON app_locks(expires_at);");
+    } catch (e) {
+      console.warn("[DB] app_locks:", e.message);
+    }
 
     try {
       const cols = await dbAll("PRAGMA table_info(pagos);");
@@ -206,23 +413,23 @@ async function runMigrations() {
       console.warn("[DB] Migracion pagos warn:", e.message);
     }
 
-    // Índices críticos para patrones reales de consulta
+    await migratePagosEstadoCobro();
+
     await ensureIndex(
       "ix_pagos_insc_fecha",
       "CREATE INDEX IF NOT EXISTS ix_pagos_insc_fecha ON pagos(inscripcion_id, fecha_pago);"
     );
     await ensureIndex(
-      "ix_pagos_fecha_estado",
-      "CREATE INDEX IF NOT EXISTS ix_pagos_fecha_estado ON pagos(fecha_pago, estado);"
+      "ix_pagos_fecha_cobro",
+      "CREATE INDEX IF NOT EXISTS ix_pagos_fecha_cobro ON pagos(fecha_pago, cobro_estado);"
     );
     await ensureIndex(
-      "ix_pagos_insc_estado_fecha",
-      "CREATE INDEX IF NOT EXISTS ix_pagos_insc_estado_fecha ON pagos(inscripcion_id, estado, fecha_pago);"
+      "ix_pagos_insc_cobro_fecha",
+      "CREATE INDEX IF NOT EXISTS ix_pagos_insc_cobro_fecha ON pagos(inscripcion_id, cobro_estado, fecha_pago);"
     );
-    // Unicidad de cuota por inscripción (solo para pagos efectivamente pagados)
     await ensureIndex(
-      "ux_pagos_insc_cuota_pagado",
-      "CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_insc_cuota_pagado ON pagos(inscripcion_id, cuota_nro) WHERE estado = 'Pagado' AND cuota_nro IS NOT NULL;"
+      "ix_pagos_vida",
+      "CREATE INDEX IF NOT EXISTS ix_pagos_vida ON pagos(estado, fecha_pago);"
     );
 
     // Limpieza: evitar índice duplicado de asistencia (solo si existe)
@@ -268,48 +475,44 @@ async function runMigrations() {
       console.log("[DB] Tabla inventario_prestamos ya existe");
     }
 
-    // ==== PASO 7: REACTIVAR foreign_keys ya con DB limpia ====
+    // ==== PASO 7: schema.sql (después de migraciones; evita índices sobre columnas aún inexistentes) ====
+    const schemaPath = findSchemaPath();
+    if (schemaPath) {
+      const schema = fs.readFileSync(schemaPath, "utf8");
+      await new Promise((resolve, reject) => {
+        db.exec(schema, (err) => (err ? reject(err) : resolve()));
+      });
+      console.log("[DB] schema aplicado/ok:", schemaPath);
+    }
+
+    // ==== PASO 8: REACTIVAR foreign_keys ====
     await dbRun("PRAGMA foreign_keys = ON;");
 
     console.log("[DB] Migraciones completadas");
   } catch (e) {
     console.error("[DB] Error en migraciones:", e.message);
     console.error(e.stack);
-    // Reactivar FK aunque haya error
     try { await dbRun("PRAGMA foreign_keys = ON;"); } catch (_) {}
   }
 }
 
-// Ejecutar migraciones al iniciar
-runMigrations().catch(err => {
-  console.error("[DB] Error critico en migraciones:", err.message);
-});
-
-// schema.sql: aplicar despues de migraciones (en la misma cola de sqlite3)
 function findSchemaPath() {
   const cands = [];
   if (process.env.SCHEMA_PATH) cands.push(process.env.SCHEMA_PATH);
   cands.push(path.join(config.ROOT_DIR, "db", "schema.sql"));
   cands.push(path.join(__dirname, "..", "db", "schema.sql"));
   for (const p of cands) {
-    try { if (fs.existsSync(p) && fs.statSync(p).isFile()) return p; } catch (_) {}
+    try {
+      if (fs.existsSync(p) && fs.statSync(p).isFile()) return p;
+    } catch (_) {}
   }
   return null;
 }
 
-try {
-  const schemaPath = findSchemaPath();
-  if (!schemaPath) {
-    console.warn("[DB] schema.sql no encontrado");
-  } else {
-    const schema = fs.readFileSync(schemaPath, "utf8");
-    db.exec(schema, (err) => {
-      if (err) console.error("[DB] schema error:", err.message);
-      else console.log("[DB] schema aplicado/ok:", schemaPath);
-    });
-  }
-} catch (e) {
-  console.error("[DB] schema init error:", e.message);
-}
+const migrationPromise = runMigrations().catch((err) => {
+  console.error("[DB] Error critico en migraciones:", err.message);
+  throw err;
+});
 
 module.exports = db;
+module.exports.migrationPromise = migrationPromise;

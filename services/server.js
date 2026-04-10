@@ -9,6 +9,8 @@ const path = require("path");
 const fs = require("fs");
 
 const config = require("./config");
+const https = require("https");
+const pkg = require("../package.json");
 
 function tryRequire(p) {
   try { return require(p); } catch (_) { return null; }
@@ -252,6 +254,93 @@ app.get("/api/health", async (req, res) => {
   return res.json({ ok: true, db: dbOk, uptime: process.uptime() });
 });
 
+function httpsGetJson(url, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      url,
+      { headers: { "User-Agent": "CHINO_BARBER-update-check", Accept: "application/vnd.github+json" } },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 400) {
+            return reject(new Error(`HTTP ${res.statusCode}`));
+          }
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error("timeout"));
+    });
+  });
+}
+
+function compareSemver(a, b) {
+  const pa = String(a || "").replace(/^v/i, "").split(".").map((x) => parseInt(x, 10) || 0);
+  const pb = String(b || "").replace(/^v/i, "").split(".").map((x) => parseInt(x, 10) || 0);
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i++) {
+    const da = pa[i] || 0;
+    const dbv = pb[i] || 0;
+    if (da > dbv) return 1;
+    if (da < dbv) return -1;
+  }
+  return 0;
+}
+
+app.get("/api/app/version", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  return res.json({ ok: true, version: pkg.version, name: pkg.name });
+});
+
+app.get("/api/app/update-check", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const localVersion = String(pkg.version || "0.0.0");
+  const repo = process.env.UPDATE_CHECK_REPO || "Diego-Dell/CHINO_BARBER";
+  const url = `https://api.github.com/repos/${repo}/releases/latest`;
+  try {
+    const rel = await httpsGetJson(url);
+    const tag = String(rel.tag_name || rel.name || "").trim();
+    const latestVersion = tag.replace(/^v/i, "");
+    const cmp = compareSemver(latestVersion, localVersion);
+    try {
+      const { writeLog } = require("../src/lib/auditLog");
+      await writeLog(
+        "update_check",
+        JSON.stringify({ localVersion, latestVersion, updateAvailable: cmp > 0 }),
+        "sistema"
+      );
+    } catch (_) {}
+    return res.json({
+      ok: true,
+      localVersion,
+      latestVersion,
+      latestTag: tag,
+      updateAvailable: cmp > 0,
+      published_at: rel.published_at || null,
+      html_url: rel.html_url || null,
+    });
+  } catch (e) {
+    console.warn("[UPDATE-CHECK]", e.message);
+    try {
+      const { writeLog } = require("../src/lib/auditLog");
+      await writeLog("update_check_error", String(e.message || e), "sistema");
+    } catch (_) {}
+    return res.json({
+      ok: false,
+      localVersion,
+      updateAvailable: false,
+      error: "No se pudo consultar la versión remota",
+    });
+  }
+});
+
 
 // ── Licencia ─────────────────────────────────────────────────────────────────
 let licMod = null;
@@ -309,23 +398,27 @@ app.use((req, res, next) => {
 })();
 
 // 404 API
-app.use((req, res, next) => {
-  if (req.path && req.path.startsWith("/api/")) {
-    return res.status(404).json({ ok: false, error: "Not found" });
-  }
-  return next();
-});
-
-// Error handler
-app.use((err, req, res, next) => {
-  const isApi = req.path && req.path.startsWith("/api/");
-  const prod = String(config.NODE_ENV || "").toLowerCase() === "production";
-  const msg = err && err.message ? err.message : "Server error";
-  console.error("[ERROR]", msg);
-
-  if (isApi) return res.status(500).json({ ok: false, error: prod ? "Internal server error" : msg });
-  return res.status(500).send(prod ? "Internal server error" : msg);
-});
+try {
+  const { apiNotFound, apiErrorMiddleware } = require("../src/middleware/apiErrorMiddleware");
+  app.use(apiNotFound);
+  app.use(apiErrorMiddleware);
+} catch (_) {
+  // Fallback mínimo si el módulo no está disponible
+  app.use((req, res, next) => {
+    if (req.path && req.path.startsWith("/api/")) {
+      return res.status(404).json({ ok: false, error: "Not found" });
+    }
+    return next();
+  });
+  app.use((err, req, res, next) => {
+    const isApi = req.path && req.path.startsWith("/api/");
+    const prod = String(config.NODE_ENV || "").toLowerCase() === "production";
+    const msg = err && err.message ? err.message : "Server error";
+    console.error("[ERROR]", msg);
+    if (isApi) return res.status(500).json({ ok: false, error: prod ? "Internal server error" : msg });
+    return res.status(500).send(prod ? "Internal server error" : msg);
+  });
+}
 
 
 // ── Asegurar que backup va a AppData (no al directorio del proyecto) ─────────
@@ -341,42 +434,71 @@ if (process.env.APP_USER_DATA && !process.env.BACKUP_DIR) {
     const backup = require("./backup");
     const INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 horas
     const MAX_BACKUPS = 10;
+    const OLDER_THAN_DAYS = 30;
 
     async function doBackup() {
       try {
         const r = await backup.createBackup();
         if (r.ok) {
-          // Rotar: mantener solo los últimos MAX_BACKUPS
-          await backup.purgeOldBackups({ keepLast: MAX_BACKUPS, olderThanDays: 0 });
+          await backup.purgeOldBackups({ keepLast: MAX_BACKUPS, olderThanDays: OLDER_THAN_DAYS });
+          try {
+            const { writeLog } = require("../src/lib/auditLog");
+            await writeLog("backup_ok", JSON.stringify({ file: r.file, size: r.size }), "sistema");
+          } catch (e) {
+            console.warn("[BACKUP] log:", e.message);
+          }
+        } else if (r.error) {
+          try {
+            const { writeLog } = require("../src/lib/auditLog");
+            await writeLog("backup_error", String(r.error), "sistema");
+          } catch (e) {
+            console.warn("[BACKUP] log:", e.message);
+          }
         }
-      } catch (_) {}
+      } catch (e) {
+        console.error("[BACKUP]", e.message || e);
+        try {
+          const { writeLog } = require("../src/lib/auditLog");
+          await writeLog("backup_error", String(e.message || e), "sistema");
+        } catch (_) {}
+      }
     }
 
-    // Primer backup a los 5 minutos de iniciar
-    setTimeout(doBackup, 5 * 60 * 1000);
-    // Luego cada 6 horas
+    setImmediate(doBackup);
     setInterval(doBackup, INTERVAL_MS);
   } catch (_) {}
 })();
 
-// Start
+// Start (127.0.0.1: evita exposición accidental en LAN)
 const requestedPort = Number(process.env.PORT ?? config.PORT ?? 0) || 0;
+const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
 
-const server = app.listen(requestedPort, () => {
-  const actualPort = server.address().port;
+let whenReadyResolve;
+const whenReady = new Promise((resolve) => {
+  whenReadyResolve = resolve;
+});
 
-  console.log(`[SERVER] Running on http://localhost:${actualPort}`);
+const server = app.listen(requestedPort, BIND_HOST, () => {
+  const addr = server.address();
+  const actualPort = addr && addr.port;
+
+  console.log(`[SERVER] Running on http://${BIND_HOST}:${actualPort}`);
   console.log(`[SERVER] Public dir: ${config.PUBLIC_DIR}`);
   console.log(`[SERVER] DB: ${config.DB_PATH}`);
 
-  // ✅ si Electron lo lanzó con fork(), avisa el puerto REAL
   if (typeof process.send === "function") {
     try { process.send({ type: "ready", port: actualPort }); } catch (_) {}
   }
+  whenReadyResolve();
 });
+
+function getPort() {
+  const a = server.address();
+  return a && a.port ? a.port : null;
+}
 
 // logs de crashes reales
 process.on("uncaughtException", (e) => console.error("[FATAL] uncaughtException:", e));
 process.on("unhandledRejection", (e) => console.error("[FATAL] unhandledRejection:", e));
 
-module.exports = { app, server, getPort: () => server.address().port };
+module.exports = { app, server, getPort, whenReady };

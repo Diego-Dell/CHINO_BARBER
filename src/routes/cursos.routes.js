@@ -1,6 +1,7 @@
 const express = require("express");
 const db = require("../db");
 const { syncCursosFinalizados } = require("../utils/syncEstados");
+const { toCentavos, fromCentavos } = require("../lib/money");
 const router = express.Router();
 
 // ================= helpers DB =================
@@ -257,6 +258,15 @@ const estadoAuto = calcularEstadoCurso({
 
       return {
         ...c,
+        // Dinero: centavos como fuente de verdad
+        precio_centavos:
+          c.precio_centavos != null
+            ? Number(c.precio_centavos || 0)
+            : Math.trunc(Math.round(Number(c.precio || 0) * 100)),
+        precio:
+          (c.precio_centavos != null
+            ? Number(c.precio_centavos || 0)
+            : Math.trunc(Math.round(Number(c.precio || 0) * 100))) / 100,
         ...extra,
         estado: estadoAuto, // 👈 sobrescribe lo que haya en BD
       };
@@ -358,6 +368,7 @@ router.post("/", async (req, res) => {
     const duracion = toInt(b.duracion, 0);
 
     const precio = toNum(b.precio, 0);
+    const precio_centavos = toCentavos(precio) ?? 0;
 
     if (!nombre) return res.status(400).json({ ok: false, error: "Nombre del curso es obligatorio" });
     if (!instructor_id) return res.status(400).json({ ok: false, error: "Instructor requerido" });
@@ -373,13 +384,25 @@ router.post("/", async (req, res) => {
     if (hasCol(cols, "horario_por_dia")) {
       const horario_por_dia = buildHorarioPorDia({ fecha_inicio, hora_inicio, duracion });
 
+      const hasPrecioCentavos = hasCol(cols, "precio_centavos");
       const r = await dbRun(
         `
         INSERT INTO cursos
-        (nombre, nivel, nro_clases, dias, horario_por_dia, precio, cupo, estado, instructor_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (nombre, nivel, nro_clases, dias, horario_por_dia, ${hasPrecioCentavos ? "precio_centavos, " : ""}precio, cupo, estado, instructor_id)
+        VALUES (?, ?, ?, ?, ?, ${hasPrecioCentavos ? "?, " : ""}?, ?, ?, ?)
         `,
-        [nombre, null, nro_clases, dias, horario_por_dia, precio, cupo, estadoBD, instructor_id]
+        [
+          nombre,
+          null,
+          nro_clases,
+          dias,
+          horario_por_dia,
+          ...(hasPrecioCentavos ? [precio_centavos] : []),
+          fromCentavos(precio_centavos),
+          cupo,
+          estadoBD,
+          instructor_id,
+        ]
       );
 
       return res.status(201).json({ ok: true, data: { id: r.lastID } });
@@ -417,8 +440,12 @@ router.post("/", async (req, res) => {
       vals.push(duracion);
     }
 
+    if (hasCol(cols, "precio_centavos")) {
+      fields.push("precio_centavos");
+      vals.push(precio_centavos);
+    }
     fields.push("precio");
-    vals.push(precio);
+    vals.push(fromCentavos(precio_centavos));
 
     fields.push("cupo");
     vals.push(cupo);
@@ -474,6 +501,7 @@ router.put("/:id", async (req, res) => {
     if (hasCol(cols, "horario_por_dia")) {
       const horario_por_dia = buildHorarioPorDia({ fecha_inicio, hora_inicio, duracion });
 
+      const hasPrecioCentavos = hasCol(cols, "precio_centavos");
       await dbRun(
         `
         UPDATE cursos
@@ -481,12 +509,22 @@ router.put("/:id", async (req, res) => {
             nro_clases = ?,
             dias = ?,
             horario_por_dia = ?,
-            precio = ?,
+            ${hasPrecioCentavos ? "precio_centavos = ?, " : ""}precio = ?,
             cupo = ?,
             instructor_id = ?
         WHERE id = ?
         `,
-        [nombre, nro_clases, dias || null, horario_por_dia || null, precio, cupo, instructor_id, id]
+        [
+          nombre,
+          nro_clases,
+          dias || null,
+          horario_por_dia || null,
+          ...(hasPrecioCentavos ? [precio_centavos] : []),
+          fromCentavos(precio_centavos),
+          cupo,
+          instructor_id,
+          id,
+        ]
       );
 
       return res.json({ ok: true });
@@ -518,8 +556,12 @@ router.put("/:id", async (req, res) => {
       vals.push(duracion);
     }
 
+    if (hasCol(cols, "precio_centavos")) {
+      sets.push("precio_centavos = ?");
+      vals.push(precio_centavos);
+    }
     sets.push("precio = ?");
-    vals.push(precio);
+    vals.push(fromCentavos(precio_centavos));
 
     sets.push("cupo = ?");
     vals.push(cupo);

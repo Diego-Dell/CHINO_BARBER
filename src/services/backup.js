@@ -401,6 +401,24 @@ async function restoreBackup(filename, options = {}) {
       // Opcional: intentar "checkpoint" luego de restore no aplica (es archivo ya)
       fs.renameSync(tmpRestore, DB_PATH);
 
+      // Verificación básica: integrity_check (si sqlite3 está disponible)
+      if (sqlite3) {
+        const db = openSqlite(DB_PATH);
+        try {
+          const row = await new Promise((resolve, reject) => {
+            db.get("PRAGMA integrity_check;", (err, r) => (err ? reject(err) : resolve(r || null)));
+          });
+          const ok = row && (row.integrity_check === "ok" || row["integrity_check"] === "ok");
+          if (!ok) {
+            const err = new Error("Integrity check failed after restore");
+            err.code = "INTEGRITY_CHECK_FAILED";
+            throw err;
+          }
+        } finally {
+          await closeSql(db);
+        }
+      }
+
       return { ok: true, restoredFrom: filename, preBackup };
     });
   } catch (err) {
@@ -430,20 +448,25 @@ async function purgeOldBackups({ keepLast = 20, olderThanDays = 30 } = {}) {
     // Mantener siempre los keep primeros
     const mustKeepSet = new Set(items.slice(0, keep).map((x) => x.file));
 
+    const keepLastSet = new Set(items.slice(0, keep).map((x) => x.file));
+    let idx = 0;
     for (const it of items) {
       const fullPath = it.path;
-      if (mustKeepSet.has(it.file)) {
+      if (keepLastSet.has(it.file)) {
         kept.push(it.file);
+        idx++;
         continue;
       }
 
       const t = new Date(it.createdAt).getTime();
       const isOld = Number.isFinite(t) ? t < cutoff : false;
 
-      // Solo borrar si excede criterios de antigüedad o si hay demasiados
-      // Regla: además de olderThanDays, si hay más de keep, se puede borrar los más viejos.
-      // (Aquí: borra si esOld; si days=0, no borra por edad, solo por exceso no aplica por requisito)
-      if (days > 0 && isOld) {
+      // Borrado:
+      // - Siempre mantener keepLast más nuevos
+      // - Si olderThanDays > 0, borrar si esOld
+      // - Si olderThanDays == 0, borrar excedentes (todo lo que quede fuera de keepLast)
+      const shouldDelete = (days > 0 && isOld) || (days === 0);
+      if (shouldDelete) {
         try {
           fs.unlinkSync(fullPath);
           deleted.push(it.file);
@@ -454,10 +477,8 @@ async function purgeOldBackups({ keepLast = 20, olderThanDays = 30 } = {}) {
       } else {
         kept.push(it.file);
       }
+      idx++;
     }
-
-    // Si aún quedan demasiados (mayor a keep) y days=0, por requisito no borramos por edad.
-    // Si quieres purga por exceso siempre, cámbialo aquí.
 
     return { ok: true, deleted, kept };
   } catch (err) {
