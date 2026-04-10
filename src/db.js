@@ -2,6 +2,7 @@
 const sqlite3 = require("sqlite3").verbose();
 const fs = require("fs");
 const path = require("path");
+const { AsyncLocalStorage } = require("async_hooks");
 
 const config = require("../services/config");
 
@@ -48,46 +49,60 @@ function dbExec(sql) {
   });
 }
 
-/**
- * Ejecuta una transaccion anidable sobre la misma conexion sqlite.
- * - Nivel 0: BEGIN [IMMEDIATE]
- * - Nivel >0: SAVEPOINT
- * Esto evita "cannot start a transaction within a transaction".
- */
-let txnDepth = 0;
+// Contexto de transaccion por flujo async y mutex global para evitar
+// transacciones externas concurrentes sobre la misma conexion sqlite.
+const txContext = new AsyncLocalStorage();
+let txQueue = Promise.resolve();
+
+function withTxMutex(fn) {
+  const previous = txQueue;
+  let release;
+  const current = new Promise((resolve) => { release = resolve; });
+  txQueue = previous.then(() => current);
+  return previous.then(async () => {
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  });
+}
+
 async function runInTransaction(fn, opts = {}) {
   const immediate = opts && opts.immediate !== false;
-  const spName = `sp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-  const isOuter = txnDepth === 0;
+  const store = txContext.getStore();
 
-  if (isOuter) {
-    await dbRun(immediate ? "BEGIN IMMEDIATE" : "BEGIN");
-  } else {
+  // Si ya estamos dentro de la misma transaccion logica, usar SAVEPOINT.
+  if (store && store.inTx) {
+    const spName = `sp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
     await dbRun(`SAVEPOINT ${spName}`);
-  }
-  txnDepth += 1;
-
-  try {
-    const result = await fn();
-    txnDepth -= 1;
-    if (isOuter) {
-      await dbRun("COMMIT");
-    } else {
-      await dbRun(`RELEASE SAVEPOINT ${spName}`);
-    }
-    return result;
-  } catch (err) {
-    txnDepth = Math.max(0, txnDepth - 1);
     try {
-      if (isOuter) {
-        await dbRun("ROLLBACK");
-      } else {
+      const result = await fn();
+      await dbRun(`RELEASE SAVEPOINT ${spName}`);
+      return result;
+    } catch (err) {
+      try {
         await dbRun(`ROLLBACK TO SAVEPOINT ${spName}`);
         await dbRun(`RELEASE SAVEPOINT ${spName}`);
-      }
-    } catch (_) {}
-    throw err;
+      } catch (_) {}
+      throw err;
+    }
   }
+
+  // Transaccion externa: se serializa para evitar solapes en la misma conexion.
+  return withTxMutex(async () => {
+    return txContext.run({ inTx: true }, async () => {
+      await dbRun(immediate ? "BEGIN IMMEDIATE" : "BEGIN");
+      try {
+        const result = await fn();
+        await dbRun("COMMIT");
+        return result;
+      } catch (err) {
+        try { await dbRun("ROLLBACK"); } catch (_) {}
+        throw err;
+      }
+    });
+  });
 }
 
 async function tableExists(tableName) {

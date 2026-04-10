@@ -226,9 +226,7 @@ router.post("/bulk", async (req, res) => {
   if (valid.length === 0) return res.json({ ok: true, processed: 0 });
 
   try {
-    await runAsync("BEGIN IMMEDIATE");
-
-    try {
+    await db.runInTransaction(async () => {
       for (const it of valid) {
         const insc = Number(it.inscripcion_id ?? it.inscripcionId ?? 0);
         const f = String(it.fecha || "").slice(0, 10);
@@ -250,12 +248,8 @@ router.post("/bulk", async (req, res) => {
         }
       }
 
-      await runAsync("COMMIT");
       return res.json({ ok: true, processed: valid.length });
-    } catch (err) {
-      await runAsync("ROLLBACK").catch(() => {});
-      throw err;
-    }
+    });
   } catch (e) {
     console.error("[POST /api/asistencia/bulk] Error:", e);
     return bad(res, e.message || "Error bulk", 500);

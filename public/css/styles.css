@@ -185,6 +185,12 @@ body {
   box-shadow: 0 10px 20px rgba(0,0,0,.20);
 }
 .sidebar-nav .nav-link span { font-weight: 700; }
+.sidebar-nav .nav-link i {
+  width: 18px;
+  text-align: center;
+  font-size: 1rem;
+  line-height: 1;
+}
 
 .overlay {
   display: none; position: fixed; inset: 0;
