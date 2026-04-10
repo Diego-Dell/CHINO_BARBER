@@ -253,7 +253,6 @@ router.post("/", async (req, res) => {
         );
       }
       if (dup) {
-        await dbRun("ROLLBACK").catch(() => {});
         return res.status(409).json({ ok: false, error: "Pago duplicado detectado. Verifica la cuota/fecha." });
       }
 

@@ -115,37 +115,40 @@ async function withDbLock({ name = LOCK_NAME, ttlMs = 60_000 }, fn) {
   // Lock persistente en DB (no en memoria)
   const owner = `${process.pid}-${Date.now()}`;
   const ttlSeconds = Math.max(5, Math.ceil((Number(ttlMs) || 60_000) / 1000));
+  const acquired = await db.runInTransaction(async () => {
+    // Limpieza de expirados
+    await dbRun(`DELETE FROM app_locks WHERE expires_at <= datetime('now')`);
 
-  // Limpieza de expirados
-  await dbRun(`DELETE FROM app_locks WHERE expires_at <= datetime('now')`);
+    // Intentar tomar lock si no existe
+    await dbRun(
+      `INSERT OR IGNORE INTO app_locks(name, acquired_at, expires_at, owner)
+       VALUES(?, datetime('now'), datetime('now', '+' || ? || ' seconds'), ?)`,
+      [name, ttlSeconds, owner]
+    );
 
-  // Intentar tomar lock si no existe
-  await dbRun(
-    `INSERT OR IGNORE INTO app_locks(name, acquired_at, expires_at, owner)
-     VALUES(?, datetime('now'), datetime('now', '+' || ? || ' seconds'), ?)`,
-    [name, ttlSeconds, owner]
-  );
+    // Si existe, solo reemplazar dueño cuando ya expiró
+    await dbRun(
+      `UPDATE app_locks
+       SET acquired_at = datetime('now'),
+           expires_at = datetime('now', '+' || ? || ' seconds'),
+           owner = ?
+       WHERE name = ?
+         AND expires_at <= datetime('now')`,
+      [ttlSeconds, owner, name]
+    );
 
-  // Si existe, solo reemplazar dueño cuando ya expiró
-  await dbRun(
-    `UPDATE app_locks
-     SET acquired_at = datetime('now'),
-         expires_at = datetime('now', '+' || ? || ' seconds'),
-         owner = ?
-     WHERE name = ?
-       AND expires_at <= datetime('now')`,
-    [ttlSeconds, owner, name]
-  );
-
-  const row = await dbGet(`SELECT owner FROM app_locks WHERE name = ?`, [name]);
-  const acquired = row && row.owner === owner;
+    const row = await dbGet(`SELECT owner FROM app_locks WHERE name = ?`, [name]);
+    return !!(row && row.owner === owner);
+  });
   if (!acquired) return; // lock ocupado
 
   try {
     return await fn();
   } finally {
     try {
-      await dbRun(`DELETE FROM app_locks WHERE name = ? AND owner = ?`, [name, owner]);
+      await db.runInTransaction(async () => {
+        await dbRun(`DELETE FROM app_locks WHERE name = ? AND owner = ?`, [name, owner]);
+      });
     } catch (_) {}
   }
 }
